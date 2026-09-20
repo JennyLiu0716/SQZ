@@ -14,14 +14,15 @@
 
 """Protocol-level abstraction over PyZX circuits.
 
-Planned contents (ported from the thesis implementation):
-
-* ``QProgram`` -- a protocol as a sequence of circuit stages and qubit
-  permutations, with initialisation / post-selection annotations, producing
-  one master space-time ZX-diagram on demand;
-* ``GateLevelManager`` / ``GateBlock`` -- hierarchical *level-up* of consecutive
-  gates into blocks (a syndrome-extraction round, a logical gate) and merging of
-  blocks acting on disjoint qubits, with extraction of the sub-diagram of a block;
-* ``Permutation`` -- qubit permutation as a first-class gate.
-
+* :class:`QProgram` -- a protocol as a sequence of circuit stages and qubit
+  permutations on a hardware layout, producing one master space-time
+  ZX-diagram on demand and the sub-diagram of any stage or block;
+* :class:`LevelManager` / :class:`Block` -- hierarchical *level-up* of
+  consecutive stages into blocks (a syndrome-extraction round, a logical gate)
+  and merging of blocks separated only by stages on other qubits.
 """
+
+from .levels import Block, LevelManager
+from .program import QProgram, Stage
+
+__all__ = ['QProgram', 'Stage', 'Block', 'LevelManager']

@@ -14,8 +14,8 @@ Designing and Verifying Dynamic Quantum Error Correction Protocols*
 
 | Package | Purpose | Status |
 |---|---|---|
-| `zxqec.qprogram` | `QProgram`: build a protocol from circuit stages and permutations; hierarchical *level-up* of gates into blocks (syndrome rounds, logical gates); extract the sub-diagram of a block | planned (port from thesis) |
-| `zxqec.spacetime` | 2+1D space-time programs: hardware `Topology`, qubit ↔ node mapping, 3D view (2D space + 1D time) of ZX-diagrams | planned (port from thesis) |
+| `zxqec.qprogram` | `QProgram`: build a protocol from circuit stages and permutations; hierarchical *level-up* of stages into blocks (syndrome rounds, logical gates); extract the sub-diagram of any stage or block | **done** (stage-based rework of the thesis code) |
+| `zxqec.spacetime` | 2+1D space-time programs: hardware `Topology`, qubit ↔ node mapping, `induced_subdiagram`; 3D view (2D space + 1D time) of ZX-diagrams | `Topology` + sub-diagrams **done**; 3D view planned |
 | `zxqec.tableau` | Import and extract stabilizer tableaus to/from ZX-diagrams: syndrome measurement circuits, stabilizer states, unitary Clifford circuits | planned |
 | `zxqec.topological` | Pauli-box hypergraph normal form (each weight-*w* stabilizer = one off-qubit phase-free X spider on *w* on-qubit phase-free Z spiders, cf. Def. 5.1 of [arXiv:2603.09580](https://arxiv.org/abs/2603.09580)); topological view rendering each hyperedge as a surface/volume coloured by Pauli type (X red, Z green, Y blue, mixed as gradients); toggle between ZX and topological view | planned |
 | `zxqec.gui` | ZXLive embedding for drag-and-drop rewrites after level-up | planned |
@@ -25,6 +25,38 @@ The 1+1D time layer (per-spider `timestep`/`delay` vertex data, ASAP
 scheduling, space-time cost metrics, `time_slice`) lives upstream in
 `pyzx.spacetime`; this library builds the second spatial dimension and the
 protocol-level abstractions on top of it.
+
+## A first look
+
+```python
+import pyzx as zx
+from pyzx.circuit import Circuit
+from pyzx.circuit.gates import HAD, CNOT, Measurement, Reset
+from zxqec.qprogram import QProgram
+
+rnd = Circuit(3)                                   # one syndrome-extraction round: ancilla = qubit 2
+for g in [Reset(2), HAD(2), CNOT(2, 0), CNOT(2, 1), HAD(2), Measurement(2)]:
+    rnd.add_gate(g)
+
+p = QProgram(3, initial_states={2: '0'}, gate_durations={"CNOT": 2})
+p.add_circuit(rnd, name="round 1")
+p.add_permutation([1, 0, 2], name="swap")          # move logical qubit 0 to wire 1 and back
+p.add_circuit(rnd, name="round 2")
+
+g = p.graph()                                      # master space-time ZX-diagram (a plain pyzx graph)
+zx.draw(g, show_time=True)                         # spiders on physical wires, timestep labels, squiggly delays
+p.level_up(0, 0, 1, name="round + swap")           # group stages into a block ...
+h = p.block_graph(1, 0)                            # ... and cut its sub-diagram out
+zx.full_reduce(h)                                  # everything PyZX offers applies to it
+```
+
+Every spider of `g` carries `timestep`, `delay` (from `pyzx.spacetime`), `stage`
+and `logical_qubit` vertex data. Within a stage gates are scheduled as soon as
+possible; stages run one after the other. A permutation stage only changes on
+which physical wire a logical qubit sits (the program as a map on logical
+qubits is unchanged); with a `Topology` it is checked to be a layer of disjoint
+swaps along edges. Qubits measured in one stage may be reused after a `Reset`
+in a later one.
 
 ## Installation
 
