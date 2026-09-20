@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zxqec"
+version = "0.1.0.dev0"
+description = "Space-time ZX-diagrams for designing and verifying dynamic quantum error correction protocols, built on PyZX"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    {name = "Chenxi Liu"},
+    {name = "Lia Yeh"},
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Development Status :: 2 - Pre-Alpha",
+]
+dependencies = [
+    # PyZX is taken from the fork's master branch, which carries pyzx.spacetime
+    # (timestep/delay annotation, ASAP scheduling, time_slice) ahead of the
+    # upstream release. Switch to a plain "pyzx>=X.Y" once that is released.
+    # For development next to a checkout use `pip install -e ../pyzx` instead.
+    "pyzx @ git+https://github.com/JennyLiu0716/pyzx.git@master",
+    "numpy>=1.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/JennyLiu0716/zxqec"
+Repository = "https://github.com/JennyLiu0716/zxqec.git"
+
+[project.optional-dependencies]
+dev = [
+    "matplotlib>=2.2",
+    "pytest>=7",
+    "mypy~=2.1.0",
+]
+gui = [
+    "zxlive",
+]
+
+[tool.setuptools.packages.find]
+include = ["zxqec*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["numpy.*", "matplotlib.*", "pyzx.*"]
+ignore_missing_imports = true
