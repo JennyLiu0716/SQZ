@@ -15,7 +15,7 @@ Designing and Verifying Dynamic Quantum Error Correction Protocols*
 | Package | Purpose | Status |
 |---|---|---|
 | `zxqec.qprogram` | `QProgram`: build a protocol from circuit stages and permutations; hierarchical *level-up* of stages into blocks (syndrome rounds, logical gates); extract the sub-diagram of any stage or block | **done** (stage-based rework of the thesis code) |
-| `zxqec.spacetime` | 2+1D space-time programs: hardware `Topology`, qubit ↔ node mapping, `induced_subdiagram`; 3D view (2D space + 1D time) of ZX-diagrams | `Topology` + sub-diagrams **done**; 3D view planned |
+| `zxqec.spacetime` | 2+1D space-time programs: hardware `Topology`, qubit ↔ node mapping, `induced_subdiagram`; drawing on a time axis with block shading, and the 3D view (2D space + 1D time) | **done** (first version; interactive level navigation belongs to the GUI) |
 | `zxqec.tableau` | Import and extract stabilizer tableaus to/from ZX-diagrams: syndrome measurement circuits, stabilizer states, unitary Clifford circuits | planned |
 | `zxqec.topological` | Pauli-box hypergraph normal form (each weight-*w* stabilizer = one off-qubit phase-free X spider on *w* on-qubit phase-free Z spiders, cf. Def. 5.1 of [arXiv:2603.09580](https://arxiv.org/abs/2603.09580)); topological view rendering each hyperedge as a surface/volume coloured by Pauli type (X red, Z green, Y blue, mixed as gradients); toggle between ZX and topological view | planned |
 | `zxqec.gui` | ZXLive embedding for drag-and-drop rewrites after level-up | planned |
@@ -48,6 +48,12 @@ zx.draw(g, show_time=True)                         # spiders on physical wires, 
 p.level_up(0, 0, 1, name="round + swap")           # group stages into a block ...
 h = p.block_graph(1, 0)                            # ... and cut its sub-diagram out
 zx.full_reduce(h)                                  # everything PyZX offers applies to it
+
+from zxqec.spacetime import Topology, draw_program, draw_program_3d
+draw_program(p, level=1)                           # 2D, horizontal axis = time, blocks of level 1 shaded
+q = QProgram(3, topology=Topology.line(3), initial_states={2: '0'})
+q.add_circuit(rnd)
+draw_program_3d(q, level=0)                        # 2+1D: qubits at their topology positions, time upwards
 ```
 
 Every spider of `g` carries `timestep`, `delay` (from `pyzx.spacetime`), `stage`

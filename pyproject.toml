@@ -55,5 +55,5 @@ python_version = "3.10"
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["numpy.*", "matplotlib.*", "pyzx.*"]
+module = ["numpy.*", "matplotlib.*", "mpl_toolkits.*", "pyzx.*"]
 ignore_missing_imports = true

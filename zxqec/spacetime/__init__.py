@@ -21,13 +21,16 @@ data, ASAP scheduling, ``time_slice``):
 * :mod:`~zxqec.spacetime.subdiagram` -- ``stage`` / ``logical_qubit`` vertex
   data and :func:`induced_subdiagram`, which cuts any set of spiders out of a
   program graph as a valid ZX-diagram;
-* (planned) the 3D view, 2D space + 1D time, of a space-time ZX-diagram.
+* :mod:`~zxqec.spacetime.drawing` -- :func:`draw_program` (2D, time axis,
+  block shading) and :func:`draw_program_3d` / :func:`draw_graph_3d` (2D space
+  + 1D time); matplotlib is imported only when they are called.
 """
 
 from .subdiagram import (
     LOGICAL_QUBIT_KEY, STAGE_KEY, get_logical_qubit, get_stage, induced_subdiagram,
     set_logical_qubit, set_stage, shift_timesteps,
 )
+from .drawing import VIEWS, draw_graph_3d, draw_program, draw_program_3d, draw_program_views
 from .topology import Topology
 
 __all__ = [
@@ -35,4 +38,5 @@ __all__ = [
     'STAGE_KEY', 'LOGICAL_QUBIT_KEY',
     'get_stage', 'set_stage', 'get_logical_qubit', 'set_logical_qubit',
     'shift_timesteps', 'induced_subdiagram',
+    'draw_program', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views', 'VIEWS',
 ]
