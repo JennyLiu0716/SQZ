@@ -148,14 +148,59 @@ class QProgram:
             p.add_circuit(circ)
         return p
 
-    def add_circuit(self, circ: Circuit, name: str | None = None) -> int:
-        """Append a circuit stage; returns its stage index."""
+    def add_circuit(self, circ: Circuit, name: str | None = None, physical: bool = False) -> int:
+        """Append a circuit stage; returns its stage index.
+
+        By default the circuit acts on logical qubits. With ``physical=True`` its
+        qubit indices are physical wires instead, and the gates are relabelled
+        to the logical qubits currently sitting on those wires (the current
+        mapping must then be a permutation of ``range(qubits)``) -- the natural
+        way to write a protocol whose later stages refer to positions after a
+        permutation.
+        """
         if circ.qubits != self.qubits:
             raise ValueError("stage has {} qubits, program has {}".format(circ.qubits, self.qubits))
         if circ.bits != self.bits:
             raise ValueError("stage has {} bits, program has {}".format(circ.bits, self.bits))
+        if physical:
+            if sorted(self._mapping) != list(range(self.qubits)):
+                raise ValueError("physical=True needs the mapping to be a permutation of the wires "
+                                 "0..{}".format(self.qubits - 1))
+            to_logical = [0] * self.qubits
+            for k, p in enumerate(self._mapping):
+                to_logical[p] = k
+            relabelled = Circuit(self.qubits, bit_amount=self.bits)
+            relabelled.add_circuit(circ, mask=to_logical)
+            circ = relabelled
         st = Stage(len(self._stages), 'circuit', circ.copy(), tuple(self._mapping), name=name)
         return self._append(st)
+
+    def quantum_graph(self) -> BaseGraph:
+        """The master graph without the classical-bit wires (a copy).
+
+        Classical bits are inert identity wires in the ZX-diagram (the outcomes
+        themselves live in the phases), so dropping them does not change the
+        quantum map; this is the graph to verify or reduce.
+        """
+        return self._without_classical(self.graph().copy())
+
+    def _without_classical(self, g: BaseGraph) -> BaseGraph:
+        """Remove the classical-bit wires (boundaries on logical "qubits" >= ``qubits``) from ``g`` in place."""
+        ins, outs = list(g.inputs()), list(g.outputs())
+        drop = []
+        for b in ins + outs:
+            k = get_logical_qubit(g, b)
+            if k is not None and k >= self.qubits:
+                drop.append(b)
+        for b in drop:
+            for w in list(g.neighbors(b)):
+                if g.type(w) != VertexType.BOUNDARY and g.vertex_degree(w) == 1:
+                    drop.append(w)              # a spider only on the classical wire
+        drop_set = set(drop)
+        g.set_inputs(tuple(b for b in ins if b not in drop_set))
+        g.set_outputs(tuple(b for b in outs if b not in drop_set))
+        g.remove_vertices(list(drop_set))
+        return g
 
     def add_permutation(self, perm: Sequence[int] | Sequence[Sequence[int]], *,
                         cycles: bool = False, index_base: int = 0,
@@ -295,13 +340,49 @@ class QProgram:
             self._graph = self._build()
         return self._graph
 
-    def stage_graph(self, index: int) -> BaseGraph:
-        """The sub-diagram of a stage, cut out of the master graph."""
-        return self._subdiagram({index})
+    def stage_graph(self, index: int, classical: bool = True) -> BaseGraph:
+        """The sub-diagram of a stage, cut out of the master graph.
 
-    def block_graph(self, level: int, index: int) -> BaseGraph:
-        """The sub-diagram of a block of a level, cut out of the master graph."""
-        return self._subdiagram(set(self.levels.block(level, index).stages))
+        ``classical=False`` leaves out the classical-bit wires, as in
+        :meth:`quantum_graph`.
+        """
+        g = self._subdiagram({index})
+        return g if classical else self._without_classical(g)
+
+    def block_graph(self, level: int, index: int, classical: bool = True) -> BaseGraph:
+        """The sub-diagram of a block of a level, cut out of the master graph (see :meth:`stage_graph`)."""
+        g = self._subdiagram(set(self.levels.block(level, index).stages))
+        return g if classical else self._without_classical(g)
+
+    def measurement_report(self, level: int | None = None, index: int | None = None,
+                           context: bool = True, **kwargs: Any) -> Any:
+        """What happens to every measurement of the program, or of one block of a level.
+
+        Returns a :class:`~zxqec.gpf.MeasurementReport`: every outcome
+        classified as part of the Pauli frame, fixed by a detector, tied to
+        other outcomes or gauge, together with the detectors of the diagram and
+        the outcome-dependent Pauli frame.
+
+        With ``level`` and ``index``, only the measurements of that block are
+        listed. By default they are classified **in the context of the whole
+        program**, which is what makes them deterministic: a check is fixed
+        because of how the state was prepared, or tied to a measurement in
+        another block. ``context=False`` analyses the block's own sub-diagram
+        instead, where the input state is arbitrary and no outcome is
+        deterministic -- the right view for asking what the block does as a map.
+        """
+        from ..gpf import boolean_variables, measurement_report
+        if level is None:
+            return measurement_report(self.quantum_graph(), **kwargs)
+        if index is None:
+            raise ValueError("give both level and index, or neither")
+        block = self.block_graph(level, index, classical=False)
+        if not context:
+            return measurement_report(block, **kwargs)
+        report = measurement_report(self.quantum_graph(), **kwargs)
+        return report.restrict(boolean_variables(block),
+                               scope="block {} of level {} ({})".format(index, level,
+                                                                        self.block(level, index)))
 
     def time_extent(self) -> tuple[int, int] | None:
         return time_extent(self.graph())

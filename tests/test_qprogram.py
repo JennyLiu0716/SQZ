@@ -204,3 +204,25 @@ def test_initial_plus_state():
     zero = Circuit(1); zero.add_gate(HAD(0)); zero.add_gate(HAD(0))
     zero.initialize_qubits([True])
     assert zx.compare_tensors(g, zero.to_graph(), preserve_scalar=False)
+
+
+def test_physical_frame_circuits_and_quantum_graph():
+    # after swapping wires 0 and 1, a circuit written on physical positions acts on the swapped logical qubits
+    p = QProgram(3)
+    p.add_permutation([1, 0, 2])
+    p.add_circuit(circ(T(0)), physical=True)          # position 0 now holds logical qubit 1
+    assert zx.compare_tensors(p.graph(), circ(T(1)).to_graph(), preserve_scalar=False)
+    q = QProgram(2, topology=Topology.line(3), mapping={0: 2, 1: 1})
+    with pytest.raises(ValueError):
+        q.add_circuit(Circuit(2), physical=True)      # wires are not 0..n-1
+    # classical wires are dropped by quantum_graph
+    c = Circuit(2, bit_amount=1); c.add_gate(HAD(0)); c.add_gate(Measurement(0, 0))
+    r = QProgram(2, bits=1); r.add_circuit(c)
+    full, quantum = r.graph(), r.quantum_graph()
+    assert len(full.inputs()) == 3 and len(quantum.inputs()) == 2 and len(quantum.outputs()) == 1
+    # ... and from stage / block sub-diagrams on request
+    c2 = Circuit(2, bit_amount=1); c2.add_gate(T(1)); r.add_circuit(c2)
+    assert len(r.stage_graph(0).inputs()) == 3 and len(r.stage_graph(0, classical=False).inputs()) == 2
+    lvl = r.level_up(0, 0, 1)
+    assert len(r.block_graph(lvl, 0).inputs()) == 3 and len(r.block_graph(lvl, 0, classical=False).inputs()) == 2
+    assert r.block_graph(lvl, 0, classical=False).num_vertices() == r.quantum_graph().num_vertices()

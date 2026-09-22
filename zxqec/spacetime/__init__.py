@@ -23,7 +23,10 @@ data, ASAP scheduling, ``time_slice``):
   program graph as a valid ZX-diagram;
 * :mod:`~zxqec.spacetime.drawing` -- :func:`draw_program` (2D, time axis,
   block shading) and :func:`draw_program_3d` / :func:`draw_graph_3d` (2D space
-  + 1D time); matplotlib is imported only when they are called.
+  + 1D time) with matplotlib, for scripts and static figures;
+* :mod:`~zxqec.spacetime.web` -- the same views as interactive JavaScript
+  widgets for notebooks (:func:`draw_web`, :func:`draw_program_web`),
+  built on PyZX's d3 and three.js viewers.
 """
 
 from .subdiagram import (
@@ -32,6 +35,7 @@ from .subdiagram import (
 )
 from .drawing import VIEWS, draw_graph_3d, draw_program, draw_program_3d, draw_program_views
 from .topology import Topology
+from .web import draw_program_web, draw_web
 
 __all__ = [
     'Topology',
@@ -39,4 +43,5 @@ __all__ = [
     'get_stage', 'set_stage', 'get_logical_qubit', 'set_logical_qubit',
     'shift_timesteps', 'induced_subdiagram',
     'draw_program', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views', 'VIEWS',
+    'draw_web', 'draw_program_web',
 ]

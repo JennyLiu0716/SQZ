@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from ..qprogram.program import QProgram
 
 __all__ = ['draw_program', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views',
-           'block_colors', 'VIEWS']
+           'block_colors', 'VIEWS', 'time_positions']
 
 #: Named viewpoints ``(elev, azim)`` for the 3D view: ``default`` is oblique,
 #: ``top`` the bird's-eye view onto the hardware layout (time towards the
@@ -108,42 +108,74 @@ def _block_tick_ranges(program: 'QProgram', level: int) -> list[tuple[str, list[
 # 1+1D: PyZX's drawing on a time axis
 # ---------------------------------------------------------------------------
 
-def _time_layout(g: BaseGraph[VT, ET]) -> BaseGraph[VT, ET]:
-    """A copy of ``g`` whose rows are timesteps (boundaries one tick outside)."""
-    h = g.copy()
-    ext = time_extent(h)
-    if ext is None:
-        return h
-    lo, hi = ext
-    ins, outs = set(h.inputs()), set(h.outputs())
-    for v in h.vertices():
+def time_positions(g: BaseGraph[VT, ET]) -> dict[VT, float]:
+    """Horizontal position of every vertex when time is the horizontal axis.
+
+    A spider sits at its timestep; input boundaries one tick before the first
+    timestep, outputs one tick after the last; untimed spiders at their row.
+    Spiders that share a wire and a tick (a preparation and the first gate on
+    it, a measurement and its outcome leaf, ...) are spread across the tick in
+    the order of their PyZX rows so they do not overlap.
+    """
+    ext = time_extent(g)
+    lo, hi = ext if ext is not None else (0, 0)
+    ins, outs = set(g.inputs()), set(g.outputs())
+    pos: dict[VT, float] = {}
+    groups: dict[tuple[float, int], list[VT]] = {}
+    for v in g.vertices():
         if v in ins:
-            h.set_row(v, lo - 1)
+            pos[v] = float(lo - 1)
         elif v in outs:
-            h.set_row(v, hi + 1)
+            pos[v] = float(hi + 1)
         else:
-            t = get_timestep(h, v)
-            if t is not None:
-                h.set_row(v, t)
+            t = get_timestep(g, v)
+            if t is None:
+                pos[v] = float(g.row(v))
+            else:
+                pos[v] = float(t)
+                groups.setdefault((g.qubit(v), t), []).append(v)
+    for members in groups.values():
+        if len(members) > 1:
+            members.sort(key=lambda v: (g.row(v), v))
+            step = min(0.45, 0.59 / (len(members) - 1))     # > one node diameter apart, < a tick in total
+            for k, v in enumerate(members):
+                pos[v] = float(get_timestep(g, v)) + step * k  # type: ignore[arg-type]
+    return pos
+
+
+def _time_layout(g: BaseGraph[VT, ET]) -> BaseGraph[VT, ET]:
+    """A copy of ``g`` laid out with time as the horizontal axis (see :func:`time_positions`).
+
+    Every timed spider also gets the short vertex data ``t`` for display.
+    """
+    h = g.copy()
+    if time_extent(h) is None:
+        return h
+    for v, x in time_positions(h).items():
+        h.set_row(v, x)
+        t = get_timestep(h, v)
+        if t is not None and h.type(v) != VertexType.BOUNDARY:
+            h.set_vdata(v, 't', t)
     return h
 
 
 def draw_program(program: 'QProgram', level: int | None = None, *,
                  time_axis: bool = True, show_time: bool = True, alpha: float = 0.15,
-                 **kwargs: Any) -> Any:
+                 classical: bool = False, **kwargs: Any) -> Any:
     """Draw the master graph of ``program`` in 2D with matplotlib; returns the figure.
 
     With ``time_axis`` (default) spiders are placed at their timestep along the
     horizontal axis rather than at PyZX's row index, so the length of a wire is
     the time it spans. ``show_time`` adds PyZX's timestep labels and squiggly
     delays. If ``level`` is given, every block of that level is shaded over the
-    ticks it occupies and labelled. Remaining keyword arguments go to
+    ticks it occupies and labelled. ``classical=True`` also draws the
+    classical-bit wires. Remaining keyword arguments go to
     :func:`pyzx.draw_matplotlib` (e.g. ``figsize``, ``labels``).
     """
     from pyzx.drawing import draw_matplotlib
     from pyzx.utils import get_mode, settings
 
-    g = program.graph()
+    g = program.graph() if classical else program.quantum_graph()
     h = _time_layout(g) if time_axis else g
     # pyzx's draw_matplotlib calls plt.show() itself outside notebooks, which
     # would block before the shading is added; make it just return the figure.
@@ -189,9 +221,7 @@ def _positions(g: BaseGraph[VT, ET], topology: Topology | None) -> dict[VT, tupl
     at fractional qubit coordinates (e.g. an H-box between two wires) are
     offset from the lower wire. Vertices without a timestep use their row.
     """
-    ext = time_extent(g)
-    lo, hi = ext if ext is not None else (0, 0)
-    ins, outs = set(g.inputs()), set(g.outputs())
+    times = time_positions(g)
     pos: dict[VT, tuple[float, float, float]] = {}
     for v in g.vertices():
         q = g.qubit(v)
@@ -203,14 +233,7 @@ def _positions(g: BaseGraph[VT, ET], topology: Topology | None) -> dict[VT, tupl
             x += 0.4 * frac
         else:
             x, y = float(base) + frac, 0.0
-        if v in ins:
-            t = float(lo - 1)
-        elif v in outs:
-            t = float(hi + 1)
-        else:
-            ts = get_timestep(g, v)
-            t = float(ts) if ts is not None else float(g.row(v))
-        pos[v] = (x, y, t)
+        pos[v] = (x, y, times[v])
     return pos
 
 
@@ -324,8 +347,11 @@ def draw_graph_3d(g: BaseGraph[VT, ET], topology: Topology | None = None, *,
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_zlabel('time')
-    if ticks:
-        ax.set_zticks(ticks)
+    if 0 < len(ticks) <= 15:
+        ax.set_zticks(ticks)                  # one tick label per occupied timestep
+    elif ticks:
+        from matplotlib.ticker import MaxNLocator
+        ax.zaxis.set_major_locator(MaxNLocator(nbins=12, integer=True))
     # hide the axis that collapses to a point in the flat viewpoints
     if abs(v_elev - 90) < 1e-9:
         ax.set_zticks([])
@@ -377,9 +403,10 @@ def draw_program_views(program: 'QProgram', level: int | None = None, *,
     blocks = _block_tick_ranges(program, level) if level is not None else None
     n = len(views)
     fig = plt.figure(figsize=figsize or (6 * n, 6))
+    g = program.quantum_graph()
     for i, view in enumerate(views):
         ax = fig.add_subplot(1, n, i + 1, projection='3d')
-        draw_graph_3d(program.graph(), program.topology, blocks=blocks, view=view, ax=ax, **kwargs)
+        draw_graph_3d(g, program.topology, blocks=blocks, view=view, ax=ax, **kwargs)
         ax.set_title(view if isinstance(view, str) else "elev {}, azim {}".format(*view), fontsize=10)
     return _finish(fig)
 
@@ -399,11 +426,14 @@ def _slab(ax: Any, xr: tuple[float, float], yr: tuple[float, float],
         ax.plot([x, x], [y, y], [z0, z1], color=color, linewidth=0.6, alpha=0.6)
 
 
-def draw_program_3d(program: 'QProgram', level: int | None = None, **kwargs: Any) -> Any:
+def draw_program_3d(program: 'QProgram', level: int | None = None, classical: bool = False,
+                    **kwargs: Any) -> Any:
     """The 2+1D view of a program: :func:`draw_graph_3d` on its master graph.
 
     Uses the program's topology for the spatial layout and, if ``level`` is
-    given, shades the blocks of that level. Keyword arguments are passed on.
+    given, shades the blocks of that level; ``classical=True`` also draws the
+    classical-bit wires. Keyword arguments are passed on.
     """
     blocks = _block_tick_ranges(program, level) if level is not None else None
-    return draw_graph_3d(program.graph(), program.topology, blocks=blocks, **kwargs)
+    g = program.graph() if classical else program.quantum_graph()
+    return draw_graph_3d(g, program.topology, blocks=blocks, **kwargs)
