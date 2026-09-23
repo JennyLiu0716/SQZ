@@ -22,9 +22,11 @@ diagram ``D`` without internal Hadamard edges -- by colour-changing spiders
 Choosing which spiders to flip is a linear system over GF(2) with one equation
 per internal edge; it is solvable exactly when every cycle of the diagram
 crosses an even number of Hadamard edges. That covers, for instance, a
-transversal layer of Hadamards between two phase-free rounds, but not a
-genuinely non-CSS Clifford diagram, for which :func:`push_hadamards_to_boundary`
-raises.
+transversal layer of Hadamards between two phase-free rounds. Success is a
+property of the diagram *as drawn*: a diagram with an odd-Hadamard cycle may
+still denote a Pauli, which is why :func:`~zxqec.gpf.to_gpf` removes identity
+spiders and fuses same-colour neighbours first. What remains after that and
+still fails is a map whose tableau needs a ``Y``.
 
 The boundary Hadamards are recorded as the vertex data ``hadamard=True`` on the
 boundary vertex, so that ``D`` itself only has plain edges;
@@ -85,6 +87,7 @@ def push_hadamards_to_boundary(g: BaseGraph[VT, ET]) -> None:
                 else:
                     flip[w] = want
                     queue.append(w)
+    _orient(g, flip)
     for v, f in flip.items():
         if f:
             unsafe_color_change(g, v)
@@ -100,6 +103,47 @@ def push_hadamards_to_boundary(g: BaseGraph[VT, ET]) -> None:
                     continue        # boundary-boundary wire: handled from the smaller id
                 g.set_edge_type(e, EdgeType.SIMPLE)
                 g.set_vdata(b, BOUNDARY_HADAMARD_KEY, not has_boundary_hadamard(g, b))
+
+
+def _orient(g: BaseGraph[VT, ET], flip: dict[VT, int]) -> None:
+    """Choose each component's overall parity so that boundary Hadamards land on inputs.
+
+    Both parities of a connected component solve the colouring equally well --
+    flipping every spider of a component toggles only which wires keep a
+    Hadamard. We prefer the parity that leaves fewer Hadamards on outputs, so
+    that the reduced diagram reads "Hadamard first, then the outcome-dependent
+    Paulis": that is the order in which a decoder applies its corrections.
+    """
+    from collections import deque
+
+    seen: set[VT] = set()
+    for root in list(flip):
+        if root in seen:
+            continue
+        component, queue = [], deque([root])
+        seen.add(root)
+        while queue:
+            v = queue.popleft()
+            component.append(v)
+            for w in g.neighbors(v):
+                if w in flip and w not in seen:
+                    seen.add(w)
+                    queue.append(w)
+        outs = set(g.outputs())
+        cost = 0                              # Hadamards left on outputs with the current parity
+        for v in component:
+            for e in g.incident_edges(v):
+                a, b = g.edge_st(e)
+                other = b if a == v else a
+                if other in outs:
+                    had = 1 if g.edge_type(e) == EdgeType.HADAMARD else 0
+                    cost += had ^ flip[v]
+        flipped_cost = sum(1 for v in component for e in g.incident_edges(v)
+                           for a, b in [g.edge_st(e)]
+                           if (b if a == v else a) in outs) - cost
+        if flipped_cost < cost:
+            for v in component:
+                flip[v] ^= 1
 
 
 def restore_boundary_hadamards(g: BaseGraph[VT, ET]) -> BaseGraph[VT, ET]:

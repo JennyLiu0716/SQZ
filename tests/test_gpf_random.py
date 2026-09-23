@@ -75,6 +75,35 @@ def test_to_gpf_on_random_diagrams():
                                 h.substitute_variables(a) if names else h), (phases, a)
 
 
+def test_detectors_are_sound_and_complete_on_random_diagrams():
+    """Every violated constraint must give a zero branch, and every allowed branch must be non-zero.
+
+    Comparing ``D`` with ``D'`` on the allowed branches (the test below) passes
+    even when a reported detector is false, because those branches are skipped,
+    and when one is missing, because then both sides vanish. This is the check
+    that catches both. Completeness is asserted only for diagrams whose phases
+    are all Pauli: with non-Pauli gadgets the reduction is sound but not
+    complete (two gadgets sharing a parity can hide a detector).
+    """
+    import numpy as np
+    rng = random.Random(4242)
+    for phases in ('none', 'pauli', 'boolean'):
+        for _ in range(30):
+            g = random_diagram(rng, phases)
+            names = boolean_variables(g)
+            if len(names) > 4:
+                continue
+            res = reduce_gpf(g)
+            for a in assignments(names):
+                branch = g.substitute_variables(a) if names else g
+                zero = np.abs(branch.to_tensor(preserve_scalar=True)).max() < 1e-12
+                violated = res.is_zero or any(evaluate(c, a) for c in res.constraints)
+                if violated:
+                    assert zero, ("a reported detector excludes a branch that is not zero", phases, a)
+                else:
+                    assert not zero, ("a zero branch is not excluded by any detector", phases, a)
+
+
 def test_reduce_gpf_on_random_diagrams():
     rng = random.Random(7)
     for phases in ('none', 'pauli', 'boolean', 'mixed'):

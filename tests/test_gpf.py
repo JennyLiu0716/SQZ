@@ -291,3 +291,42 @@ def test_isolated_pair_with_two_non_pauli_phases_is_not_dropped():
         _remove_isolated_pairs(g)
         kept = g.num_vertices() == 2
         assert kept == (not is_pauli(a) and not is_pauli(b)), (a, b, kept)
+
+
+def test_two_gadgets_on_one_parity_keep_their_detector():
+    # Two gadgets on the same row with leaves pi/4 and 3pi/4 hide a Pauli phase: the branch c = 0
+    # is the zero map, so c + 1 is a detector. It is found because identity removal collapses the
+    # degree-two hubs and fuses the leaves into the row before the phases are isolated again.
+    import numpy as np
+    g = Graph()
+    c = new_var("c", True, g.var_registry)
+    i = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+    o = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=3)
+    w = g.add_vertex(VertexType.Z, qubit=0, row=1)
+    g.add_edge((i, w)); g.add_edge((w, o))                      # an identity wire alongside
+    row = g.add_vertex(VertexType.Z, qubit=1, row=1, phase=c)
+    for leaf_phase in (Fraction(1, 4), Fraction(3, 4)):
+        hub = g.add_vertex(VertexType.X, qubit=1, row=1.5)
+        leaf = g.add_vertex(VertexType.Z, qubit=1, row=2, phase=leaf_phase)
+        g.add_edge((row, hub)); g.add_edge((hub, leaf))
+    g.set_inputs((i,)); g.set_outputs((o,))
+    assert np.abs(g.substitute_variables({'c': 0}).to_tensor(preserve_scalar=True)).max() < 1e-12
+    assert np.abs(g.substitute_variables({'c': 1}).to_tensor(preserve_scalar=True)).max() > 1e-9
+    res = reduce_gpf(g)
+    assert [str(x) for x in res.constraints] == ['c + 1']
+
+
+def test_identity_removal_before_pushing_hadamards():
+    # An odd-Hadamard cycle through an identity spider denotes a Pauli Z; removing the identity
+    # first turns the Hadamard edge into a phase, so the diagram is accepted rather than rejected
+    g = Graph()
+    i = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+    o = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=4)
+    z1 = g.add_vertex(VertexType.Z, qubit=0, row=1)
+    z2 = g.add_vertex(VertexType.Z, qubit=0, row=3)
+    x = g.add_vertex(VertexType.X, qubit=1, row=2)
+    g.add_edge((i, z1)); g.add_edge((z2, o)); g.add_edge((z1, x)); g.add_edge((x, z2))
+    g.add_edge((z1, z2), EdgeType.HADAMARD)
+    g.set_inputs((i,)); g.set_outputs((o,))
+    h = to_gpf(g)                                                # no longer raises
+    assert is_gpf(h) and zx.compare_tensors(g, h, preserve_scalar=False)

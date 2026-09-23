@@ -66,10 +66,13 @@ def test_reduces_to_hadamard_with_pauli_frame(reduced):
     assert len(spiders) == 2 and not any(is_leaf(r, v) for v in spiders)
     z, x = sorted(spiders, key=lambda v: r.type(v) != VertexType.Z)
     assert r.type(z) == VertexType.Z and r.type(x) == VertexType.X and r.connected(z, x)
-    assert sum(has_boundary_hadamard(r, b) for b in list(r.inputs()) + list(r.outputs())) == 1
+    # the Hadamard sits on the input wire, so the diagram reads H first and the frame after it:
+    # that is the order in which a decoder applies the corrections
+    assert sum(has_boundary_hadamard(r, b) for b in r.inputs()) == 1
+    assert sum(has_boundary_hadamard(r, b) for b in r.outputs()) == 0
     # outcome-dependent Pauli frame on both layers
-    assert {str(v) for v in r.phase(z).free_vars()} == {'c[0]', 'c[1]', 'c[2]', 'c[3]', 'c[4]'}
-    assert {str(v) for v in r.phase(x).free_vars()} == {'c[26]', 'c[29]', 'c[32]'}   # the logical X readout: one column
+    assert {str(v) for v in r.phase(z).free_vars()} == {'c[26]', 'c[29]', 'c[32]'}   # the logical X readout
+    assert {str(v) for v in r.phase(x).free_vars()} == {'c[0]', 'c[1]', 'c[2]', 'c[3]', 'c[4]'}
 
 
 def test_detectors(reduced):

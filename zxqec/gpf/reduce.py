@@ -21,7 +21,7 @@ nothing changes, and finally removes isolated Z-X pairs. The result is a
 :class:`GPFResult` holding the reduced diagram, the *constraints* collected on
 the way -- Boolean polynomials in the measurement outcomes that must vanish,
 i.e. the detectors of the circuit -- and whether the diagram is identically
-zero (a constraint that is the constant ``1``).
+zero (the constraints have no solution over GF(2)).
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class GPFResult:
     """Outcome of :func:`reduce_gpf`."""
     graph: BaseGraph                 #: the reduced diagram (GPF with phases and gadgets)
     constraints: list[Any] = field(default_factory=list)  #: Boolean polynomials that must be 0
-    is_zero: bool = False            #: the diagram is the zero map (a constraint is identically 1)
+    is_zero: bool = False            #: the diagram is the zero map (the constraints are unsatisfiable)
 
     @property
     def detectors(self) -> list[Poly]:
@@ -63,7 +63,11 @@ class GPFResult:
 
 def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
                max_rounds: int = 20) -> GPFResult:
-    """Reduce ``g`` to a minimal GPF with phases; see the module docstring.
+    """Reduce ``g`` to GPF with phases and no further row reduction; see the module docstring.
+
+    The result is reduced in the sense that no free row is empty and the free
+    rows of both layers are in reduced row echelon form; it is not canonical,
+    and diagrams should be compared modulo the constraints.
 
     ``isolate_paulis=True`` isolates every non-zero phase into a gadget (the
     thesis's behaviour); by default Pauli phases stay on the spiders and are
@@ -71,6 +75,7 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     """
     h = to_gpf(g, isolate_paulis=isolate_paulis)
     constraints = _scalar_constraints(h)
+    converged = False
     for _ in range(max_rounds):
         changed = False
         for side in (VertexType.Z, VertexType.X):
@@ -82,7 +87,11 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
             constraints += apply_matrix(h, m)
         constraints += _remove_isolated_pairs(h)
         if not changed:
+            converged = True
             break
+    if not converged:
+        raise RuntimeError("reduce_gpf: the Z/X alternation did not settle within {} rounds; "
+                           "raise max_rounds or report the input diagram".format(max_rounds))
     layout_gpf(h)
     constraints = [phase_mod2(c) for c in constraints]
     constraints = [c for c in constraints if not is_zero_phase(c)]

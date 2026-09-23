@@ -55,7 +55,14 @@ __all__ = ['SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'phase_
 
 
 def phase_mod2(p: Any) -> Any:
-    """Normalise a Pauli phase: ``0``/``1`` for constants, a ``Poly`` without zero terms otherwise."""
+    """Normalise a Pauli phase: ``0``/``1`` for constants, a ``Poly`` without zero terms otherwise.
+
+    Only Pauli phases reach this: a row of a split matrix carries one by (G3),
+    and a non-Pauli constant would be silently truncated (``int(3/2) % 2 == 1``),
+    so it is rejected instead.
+    """
+    if not isinstance(p, Poly) and p != int(p):
+        raise ValueError("phase_mod2: {} is not a Pauli phase".format(p))
     if isinstance(p, Poly):
         q = p % 2
         terms = [(c, t) for c, t in q.terms if c != 0]

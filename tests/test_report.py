@@ -1,4 +1,5 @@
 """The measurement report: classification, detectors and checking a run."""
+from fractions import Fraction
 import pytest
 import pyzx as zx
 from pyzx.circuit import Circuit
@@ -102,3 +103,27 @@ def test_report_table_and_summary_render():
     assert 'c[0]' in text and 'measurements in' in text and 'outcome space' in text
     (m,) = rep.of_kind(rep.measurements['c[0]'].kind)
     assert m.stage == 0 and m.qubit == 2 and m.timestep is not None
+
+
+def test_gadget_hub_phase_is_not_reported_as_a_pauli_frame():
+    # T injection: data qubit open, magic qubit T|+>, CNOT, measure the magic qubit.
+    # The outcome lands on the hub of the T gadget, where it negates the gadget's phase
+    # (T versus T-dagger, corrected by a conditional S). It is not a Pauli correction.
+    from pyzx.utils import VertexType
+    from zxqec.gpf import is_leaf, is_stem, reduce_gpf
+    c = Circuit(2, bit_amount=1)
+    for g in [HAD(1), T(1), CNOT(0, 1), Measurement(1, 0)]:
+        c.add_gate(g)
+    c.initialize_qubits([False, True])
+    graph = c.to_graph()
+    res = reduce_gpf(graph)
+    hubs = [v for v in res.graph.vertices()
+            if is_stem(res.graph, v) and not is_leaf(res.graph, v) and str(res.graph.phase(v)) != '0']
+    assert len(hubs) == 1 and 'c[0]' in str(res.graph.phase(hubs[0]))     # the outcome is on the hub
+    rep = measurement_report(graph, result=res)
+    assert rep.frame == []                                               # no Pauli correction
+    assert rep.frame_values({'c[0]': 1}) == []
+    (colour, leaf, value), = rep.gadget_sign_values({'c[0]': 1})
+    assert value == 1 and leaf == Fraction(1, 4)                         # the pi/4 gadget is negated
+    assert rep.gadget_sign_values({'c[0]': 0})[0][2] == 0
+    assert 'not a Pauli' in rep.measurements['c[0]'].explain(rep)

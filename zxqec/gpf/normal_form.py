@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from pyzx.graph.base import BaseGraph, VT, ET
 from pyzx.rewrite_rules import bialgebra, check_bialgebra
-from pyzx.simplify import hopf_simp, spider_simp
+from pyzx.simplify import hopf_simp, id_simp, spider_simp
 from pyzx.utils import EdgeType, VertexType, is_pauli, toggle_vertex
 
 from .hadamard import push_hadamards_to_boundary
@@ -101,7 +101,8 @@ def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     for v in h.vertices():
         if h.type(v) not in (VertexType.Z, VertexType.X, VertexType.BOUNDARY):
             raise ValueError("to_gpf: vertex {} has unsupported type {}".format(v, h.type(v)))
-    push_hadamards_to_boundary(h)
+    _presimplify(h)                       # identities and same-colour pairs first: they can
+    push_hadamards_to_boundary(h)         # only shrink the cycle space Algorithm 1 has to solve
     spider_simp(h)
     h.remove_isolated_vertices()
 
@@ -110,7 +111,25 @@ def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     _pad_boundaries(h)
     _split_multi_boundary_spiders(h)
     layout_gpf(h)
+    if not is_gpf(h):
+        raise RuntimeError("to_gpf: the result is not in generalized parity form; "
+                           "this is a bug, please report the input diagram")
     return h
+
+
+def _presimplify(g: BaseGraph[VT, ET]) -> None:
+    """Remove identity spiders and fuse same-colour neighbours, to a fixpoint.
+
+    Run before :func:`push_hadamards_to_boundary`, because both are equalities
+    that can only shrink the cycle space: a diagram whose only odd-Hadamard
+    cycle runs through an identity spider is accepted after this, although the
+    diagram as drawn would be rejected.
+    """
+    while True:
+        changed = bool(id_simp(g))
+        changed |= bool(spider_simp(g))
+        if not changed:
+            return
 
 
 def _isolate_phases(g: BaseGraph[VT, ET], isolate_paulis: bool) -> None:
@@ -229,7 +248,9 @@ def is_gpf(g: BaseGraph[VT, ET]) -> bool:
 
     Plain edges only; no two adjacent spiders of the same colour; every input
     adjacent to a Z-spider and every output to an X-spider; every Z-spider on
-    at most one input and every X-spider on at most one output.
+    at most one input and every X-spider on at most one output; and every
+    non-Pauli phase on a gadget leaf, so that the rows of the split matrices
+    carry Pauli phases only.
     """
     ins, outs = set(g.inputs()), set(g.outputs())
     for e in g.edges():
@@ -249,6 +270,8 @@ def is_gpf(g: BaseGraph[VT, ET]) -> bool:
             return False
         if g.type(v) == VertexType.X and sum(1 for n in g.neighbors(v) if n in outs) > 1:
             return False
+        if g.type(v) != VertexType.BOUNDARY and not is_leaf(g, v) and not is_pauli(g.phase(v)):
+            return False                      # (G3)/(G4): non-Pauli phases live on leaves
     return True
 
 

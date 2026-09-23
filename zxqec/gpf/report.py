@@ -50,6 +50,7 @@ from pyzx.graph.base import BaseGraph, ET, VT
 from pyzx.symbolic import Poly
 from pyzx.utils import VertexType
 
+from .normal_form import is_leaf
 from .reduce import GPFResult, boolean_variables, evaluate_phase, reduce_gpf
 
 __all__ = ['Measurement', 'MeasurementReport', 'measurement_report']
@@ -93,10 +94,14 @@ class Measurement:
         if self.kind == FRAME:
             if report is None:
                 return "the reduced diagram depends on it"
-            with_it = [(kind, [v for v in _vars_of(ph) if v != self.name])
-                       for kind, ph in report.frame if self.name in _vars_of(ph)]
-            parts = ["{} correction{}".format(kind, ", with " + ", ".join(rest) if rest else "")
-                     for kind, rest in with_it]
+            parts = []
+            for kind, ph in report.frame:
+                if self.name in _vars_of(ph):
+                    rest = [v for v in _vars_of(ph) if v != self.name]
+                    parts.append("{} correction{}".format(kind, ", with " + ", ".join(rest) if rest else ""))
+            for _kind, leaf, ph in report.gadget_signs:
+                if self.name in _vars_of(ph):
+                    parts.append("negates the phase-{} gadget (a conditional rotation, not a Pauli)".format(leaf))
             return "the map depends on it: " + "; ".join(parts)
         return "no detector mentions it and the map does not depend on it"
 
@@ -118,8 +123,11 @@ class MeasurementReport:
     """The measurements of a diagram, its detectors and its Pauli frame."""
     measurements: dict[str, Measurement]
     detectors: list[Any]                       #: Boolean polynomials that are 0 in every run
-    frame: list[tuple[str, Any]]               #: ``('Z'|'X', phase)`` of the reduced diagram
+    frame: list[tuple[str, Any]]               #: ``('Z'|'X', phase)``: the Pauli frame
     result: GPFResult                          #: the reduction this came from
+    gadget_signs: list[tuple[str, Any, Any]] = field(default_factory=list)
+    #: ``(colour, leaf phase, Boolean phase)`` for each gadget hub carrying outcome variables:
+    #: the outcomes do not apply a Pauli there, they flip the sign of the gadget's phase
     dimensions: dict[str, int] = field(default_factory=dict)
     scope: str = 'the whole diagram'           #: what these measurements are part of
 
@@ -136,7 +144,8 @@ class MeasurementReport:
         keep = [n for n in self.measurements if n in set(names)]
         dets = [d for d in self.detectors if any(n in _vars_of(d) for n in keep)]
         return MeasurementReport(measurements={n: self.measurements[n] for n in keep},
-                                 detectors=dets, frame=list(self.frame), result=self.result,
+                                 detectors=dets, frame=list(self.frame),
+                                 gadget_signs=list(self.gadget_signs), result=self.result,
                                  dimensions=dict(self.dimensions), scope=scope)
 
     def internal_detectors(self) -> list[Any]:
@@ -156,8 +165,27 @@ class MeasurementReport:
         return not self.result.is_zero and not self.violated(outcomes)
 
     def frame_values(self, outcomes: Mapping[str, int]) -> list[tuple[str, int]]:
-        """The Pauli correction for these outcomes: ``[('Z', 0|1), ('X', 0|1), ...]``."""
+        """The Pauli correction for these outcomes: ``[('Z', 0|1), ('X', 0|1), ...]``.
+
+        These are the phases of the reduced diagram read in the **input frame**,
+        as the diagram is drawn: a ``('Z', 1)`` entry is a Z on the spider next
+        to the input, not a correction to apply to an output. A decoder acting
+        after the map has to push them through it -- for a diagram ending in a
+        Hadamard, as in the fold-transversal case study, Z and X swap roles.
+        Gadget signs are not included; see :meth:`gadget_sign_values`.
+        """
         return [(kind, evaluate_phase(phase, dict(outcomes))) for kind, phase in self.frame]
+
+    def gadget_sign_values(self, outcomes: Mapping[str, int]) -> list[tuple[str, Any, int]]:
+        """For each gadget hub carrying outcomes: ``(colour, leaf phase, 0|1)``.
+
+        A value of 1 means the gadget's phase is negated on this branch, i.e. the
+        protocol applied the *adjoint* of that rotation -- for a ``pi/4`` leaf,
+        ``T`` becomes ``T^dagger``, which a conditional ``S`` (not a Pauli)
+        corrects.
+        """
+        return [(kind, leaf, evaluate_phase(phase, dict(outcomes)))
+                for kind, leaf, phase in self.gadget_signs]
 
     # -- display -----------------------------------------------------------
 
@@ -179,6 +207,9 @@ class MeasurementReport:
         d = self.dimensions
         frame = ", ".join("{}({})".format(k, p) for k, p in self.frame) or "none"
         head = "{} measurements in {}; Pauli frame: {}".format(len(self.measurements), self.scope, frame)
+        if self.gadget_signs:
+            head += "\n  gadget signs (not Pauli corrections): " + ", ".join(
+                "phase {} negated when {} = 1".format(leaf, phase) for _k, leaf, phase in self.gadget_signs)
         counts = "; ".join("{} {}".format(len(self.of_kind(k)), k) for k in (FRAME, FIXED, TIED, GAUGE)
                            if self.of_kind(k))
         dims = ("{} detectors ({} of them internal); outcome space of the diagram: "
@@ -257,14 +288,27 @@ def measurement_report(g: BaseGraph[VT, ET], result: GPFResult | None = None,
     forced = _rank(det_rows, len(names))
 
     frame: list[tuple[str, Any]] = []
-    for v in sorted(res.graph.vertices()):
+    gadget_signs: list[tuple[str, Any, Any]] = []
+    for v in sorted(res.graph.vertices(), key=lambda w: (res.graph.row(w), w)):
+        # in row order, so the frame reads from the input to the output, which is the
+        # order in which the corrections are applied
         if res.graph.type(v) == VertexType.BOUNDARY:
             continue
         phase = res.graph.phase(v)
-        if _vars_of(phase):
-            frame.append(('Z' if res.graph.type(v) == VertexType.Z else 'X', phase))
-    frame_vars = {n for _, p in frame for n in _vars_of(p)}
-    steering = _rank(det_rows + [_row(names, _vars_of(p)) for _, p in frame], len(names)) - forced
+        if not _vars_of(phase):
+            continue
+        colour = 'Z' if res.graph.type(v) == VertexType.Z else 'X'
+        leaves = [w for w in res.graph.neighbors(v) if is_leaf(res.graph, w)]
+        if leaves:
+            # a hub: the outcomes flip the sign of the gadget's phase, which is a
+            # conditional rotation (for a pi/4 leaf, T versus T-dagger), not a Pauli
+            gadget_signs.append((colour, res.graph.phase(leaves[0]), phase))
+        else:
+            frame.append((colour, phase))
+    frame_vars = {n for _, p in frame for n in _vars_of(p)} | {n for _k, _l, p in gadget_signs for n in _vars_of(p)}
+    steering_rows = [_row(names, _vars_of(p)) for _, p in frame]
+    steering_rows += [_row(names, _vars_of(p)) for _k, _l, p in gadget_signs]
+    steering = _rank(det_rows + steering_rows, len(names)) - forced
 
     def order(name: str) -> tuple[Any, ...]:
         stage, _q, _pos, tick = where.get(name, (None, None, None, None))
@@ -291,7 +335,7 @@ def measurement_report(g: BaseGraph[VT, ET], result: GPFResult | None = None,
     dims = {'outcomes': len(names), 'forced': forced, 'steering': steering,
             'gauge': len(names) - forced - steering}
     return MeasurementReport(measurements=measurements, detectors=detectors, frame=frame,
-                             result=res, dimensions=dims)
+                             gadget_signs=gadget_signs, result=res, dimensions=dims)
 
 
 def _forced_value(name: str, detectors: Sequence[Any], names: Sequence[str]) -> int:
