@@ -17,8 +17,11 @@
 One layer of a GPF diagram (say the Z-spiders) is encoded as a binary matrix
 with one row per spider and one column per thing it can be connected to:
 
-* **external** columns -- input boundaries, gadget leaves and gadget stems of
-  the other colour: fixed targets whose identity must be preserved;
+* **external** columns -- input boundaries, gadget leaves and gadget hubs of
+  the other colour: fixed targets whose identity must be preserved. Anchoring
+  the rows that merely *carry* a gadget of the opposite colour is sufficient
+  but not necessary: such a row could be a source if its leaf were kept as a
+  variable of its own. We anchor it so that each gadget stays on one row;
 * **internal** columns -- the remaining spiders of the other colour;
 * a **phase** per row: its Pauli phase, a Boolean polynomial (0 or 1 for a
   concrete phase).

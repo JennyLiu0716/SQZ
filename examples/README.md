@@ -19,6 +19,15 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   reduced with `zxqec.gpf` to a Hadamard plus an outcome-dependent Pauli frame and
   24 detectors; all-zero outcomes give exactly `H`. Circuits in `circuits/ft_h/` (with a
   wiring error of the thesis files corrected -- the symbolic reduction found it).
+- [SteaneTInjection.ipynb](SteaneTInjection.ipynb) — a `T` gate injected into the [[7,1,3]] Steane
+  code, from the physical circuit to the logical gate. **Written for a reader with no quantum error
+  correction background**: it draws the code and its stabilizers, the injection gadget and the
+  protocol's stages, and explains each result in plain language. Along the way: a verified encoder
+  (its stabilizers and logical operators are derived, not asserted) and its transversal gates; the
+  protocol as a 20-qubit `QProgram`; level-up into the logical operations with a measurement report
+  per block, showing checks that are meaningless in a block alone and deterministic once it is
+  merged; and the result, `T` when the logical readout is 0 and `S†T` when it is 1, always inside
+  the code space.
 - [TrackingOutcomeVariables.ipynb](TrackingOutcomeVariables.ipynb) — why a reduced diagram shows
   only 8 of the 34 measurement outcomes, although each occurs once in the circuit. A one-gate example
   where the same measurement both keeps and loses its variable, the character-sum rule behind it, the

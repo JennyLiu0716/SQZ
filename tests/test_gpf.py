@@ -8,9 +8,10 @@ from pyzx.circuit import Circuit
 from pyzx.circuit.gates import CNOT, HAD, T, XPhase, ZPhase
 from pyzx.graph import Graph
 from pyzx.symbolic import Poly, new_var
-from pyzx.utils import EdgeType, VertexType
+from pyzx.utils import EdgeType, VertexType, is_pauli
 
 from zxqec.gpf import (
+    same_map,
     SplitMatrix, boolean_variables, equal_for_all_assignments, has_boundary_hadamard, is_gpf,
     is_leaf, is_stem, push_hadamards_to_boundary, reduce_gpf, reduce_rows, restore_boundary_hadamards,
     split_matrix, to_gpf,
@@ -212,3 +213,81 @@ def test_phase_mod2_normalisation():
     assert phase_mod2(a + 1 + 1) == a
     assert phase_mod2(a + a) == 0 and phase_mod2(3) == 1 and phase_mod2(Fraction(0)) == 0
     assert isinstance(phase_mod2(a + 1), Poly)
+
+
+def test_non_pauli_phase_on_a_boundary_spider():
+    # a degree-one spider on a boundary wire is a state, not a gadget leaf: its phase must be
+    # unfused onto a gadget, or the boundary padding would put two same-coloured spiders in a row
+    for ty, phase in [(VertexType.Z, Fraction(1, 4)), (VertexType.X, Fraction(1, 4)),
+                      (VertexType.Z, Fraction(1, 2)), (VertexType.X, Fraction(3, 4))]:
+        g = Graph()
+        v = g.add_vertex(ty, qubit=0, row=1, phase=phase)
+        i = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+        o = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=2)
+        g.add_edge((i, v)); g.add_edge((v, o))
+        g.set_inputs((i,)); g.set_outputs((o,))
+        h = to_gpf(g)
+        assert is_gpf(h), f"{ty} with phase {phase}: {[(w, h.type(w), str(h.phase(w))) for w in h.vertices()]}"
+        assert zx.compare_tensors(g, h, preserve_scalar=False)
+
+    # the same with the spider only on one side (a state)
+    g = Graph()
+    v = g.add_vertex(VertexType.Z, qubit=0, row=1, phase=Fraction(1, 4))
+    o = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=2)
+    g.add_edge((v, o)); g.set_inputs(()); g.set_outputs((o,))
+    h = to_gpf(g)
+    assert is_gpf(h) and zx.compare_tensors(g, h, preserve_scalar=False)
+
+
+def test_same_map_handles_zero_diagrams():
+    # pyzx.compare_tensors normalises by the scalar, so a zero map compares unequal to itself;
+    # same_map (and equal_for_all_assignments through it) must not be fooled by that
+    z = Graph()                                  # <0|+...> style inconsistency: the zero map
+    a = z.add_vertex(VertexType.Z, qubit=0, row=1, phase=1)
+    b = z.add_vertex(VertexType.X, qubit=0, row=2)
+    o = z.add_vertex(VertexType.BOUNDARY, qubit=0, row=3)
+    z.add_edge((a, b)); z.add_edge((a, b)); z.add_edge((b, o))
+    z.set_inputs(()); z.set_outputs((o,))
+    import numpy as np
+    assert np.abs(z.to_tensor(preserve_scalar=True)).max() < 1e-12      # it really is zero
+    assert same_map(z, z.copy())
+    assert equal_for_all_assignments(z, to_gpf(z))
+
+
+def test_zero_verdict_uses_the_constraint_system():
+    # {c, c + 1} has no solution although neither entry is the constant 1: every branch is zero
+    from zxqec.gpf import constraint_system, detector_rank, unsatisfiable
+    g = Graph()
+    reg = g.var_registry
+    c = new_var("c", True, reg)
+    i = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+    o = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=2)
+    w = g.add_vertex(VertexType.Z, qubit=0, row=1)
+    g.add_edge((i, w)); g.add_edge((w, o))
+    g.add_vertex(VertexType.Z, qubit=1, row=1, phase=c)            # isolated: 1 + (-1)^c
+    g.add_vertex(VertexType.Z, qubit=2, row=1, phase=c + 1)        # isolated: 1 + (-1)^(c+1)
+    g.set_inputs((i,)); g.set_outputs((o,))
+    res = reduce_gpf(g)
+    assert {str(x) for x in res.constraints} == {'c', 'c + 1'}
+    assert res.is_zero                                             # neither constraint is constant
+    assert unsatisfiable(res.constraints) and detector_rank(res.constraints) == 1
+    for value in (0, 1):
+        import numpy as np
+        assert np.abs(g.substitute_variables({'c': value}).to_tensor(preserve_scalar=True)).max() < 1e-12
+
+
+def test_isolated_pair_with_two_non_pauli_phases_is_not_dropped():
+    # <X(3pi/2)|Z(pi/2)> is exactly zero, so such a pair may not be discarded as a unit scalar
+    from zxqec.gpf.reduce import _remove_isolated_pairs
+    for a, b, zero in [(Fraction(1, 2), Fraction(3, 2), True), (Fraction(3, 2), Fraction(1, 2), True),
+                       (Fraction(1, 4), Fraction(1, 4), False), (1, Fraction(1, 4), False)]:
+        g = Graph()
+        u = g.add_vertex(VertexType.Z, qubit=0, row=0, phase=a)
+        v = g.add_vertex(VertexType.X, qubit=0, row=1, phase=b)
+        g.add_edge((u, v)); g.set_inputs(()); g.set_outputs(())
+        import numpy as np
+        value = complex(g.to_tensor(preserve_scalar=True))
+        assert (abs(value) < 1e-12) == zero
+        _remove_isolated_pairs(g)
+        kept = g.num_vertices() == 2
+        assert kept == (not is_pauli(a) and not is_pauli(b)), (a, b, kept)

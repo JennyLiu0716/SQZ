@@ -28,7 +28,9 @@ also carry phases:
 * **Non-Pauli phases** (``T``, ``S``, arbitrary rotations) are isolated first
   into *phase gadgets*: the phase is unfused onto a degree-one *leaf* of the
   same colour, attached to the original spider through a phase-free *stem* of
-  the opposite colour. Gadgets take no part in the skeleton reduction and are
+  the opposite colour. Later rewrites add edges to that stem, so a gadget's
+  connector is a *hub* of any degree, not necessarily degree two; nothing in
+  the pipeline depends on its degree. Gadgets take no part in the skeleton reduction and are
   treated as fixed external targets by the matrix reduction.
 
 ``isolate_paulis=True`` isolates *every* non-zero phase, which reproduces the
@@ -62,7 +64,12 @@ def is_leaf(g: BaseGraph[VT, ET], v: VT) -> bool:
 
 
 def is_stem(g: BaseGraph[VT, ET], v: VT) -> bool:
-    """A spider adjacent to a leaf (the phase-free spider a gadget hangs from)."""
+    """A spider adjacent to a leaf: the hub a gadget hangs from, of any degree.
+
+    Unfusing creates a degree-two connector, but the bialgebra step and the row
+    reduction of the opposite layer both add edges to it, after which the gadget
+    is the usual phase gadget on the hub's whole neighbourhood.
+    """
     return g.type(v) != VertexType.BOUNDARY and any(is_leaf(g, w) for w in g.neighbors(v))
 
 
@@ -115,15 +122,22 @@ def _isolate_phases(g: BaseGraph[VT, ET], isolate_paulis: bool) -> None:
             continue
         if g.vertex_degree(v) == 0:
             continue                          # a scalar; removed by the callers' clean-up
-        if g.vertex_degree(v) == 1:
-            g.set_vdata(v, GPF_ROLE_KEY, LEAF)  # already a leaf hanging off its neighbour
+        if g.vertex_degree(v) == 1 and not _on_boundary(g, v):
+            g.set_vdata(v, GPF_ROLE_KEY, LEAF)  # already a leaf hanging off another spider
             continue
+        # a degree-one spider on a boundary wire is a state or effect, not a gadget leaf: its
+        # phase is unfused onto a gadget below, so that the wire's spider stays phase-free
         g.set_phase(v, 0)
         stem = g.add_vertex(toggle_vertex(g.type(v)), g.qubit(v), g.row(v) + 0.5)
         leaf = g.add_vertex(g.type(v), g.qubit(v), g.row(v) + 1.0, p)
         g.set_vdata(leaf, GPF_ROLE_KEY, LEAF)
         g.add_edge((v, stem))
         g.add_edge((stem, leaf))
+
+
+def _on_boundary(g: BaseGraph[VT, ET], v: VT) -> bool:
+    """Whether ``v`` is adjacent to an input or output."""
+    return any(g.type(w) == VertexType.BOUNDARY for w in g.neighbors(v))
 
 
 def _reduce_skeleton(g: BaseGraph[VT, ET], max_steps: int) -> None:

@@ -30,15 +30,16 @@ from .hadamard import (BOUNDARY_HADAMARD_KEY, has_boundary_hadamard, push_hadama
                        restore_boundary_hadamards)
 from .matrix import SplitMatrix, apply_matrix, reduce_rows, split_matrix
 from .normal_form import GPF_ROLE_KEY, LEAF, is_gpf, is_leaf, is_stem, layout_gpf, to_gpf
-from .reduce import (GPFResult, boolean_variables, equal_for_all_assignments, evaluate_phase, reduce_gpf,
-                     sample_consistent_assignment)
+from .reduce import (GPFResult, boolean_variables, constraint_system, detector_rank,
+                     equal_for_all_assignments, evaluate_phase, reduce_gpf, same_map,
+                     sample_consistent_assignment, unsatisfiable)
 from .report import Measurement, MeasurementReport, measurement_report
 
 __all__ = [
     'to_gpf', 'is_gpf', 'is_leaf', 'is_stem', 'layout_gpf', 'GPF_ROLE_KEY', 'LEAF',
     'SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix',
     'reduce_gpf', 'GPFResult', 'equal_for_all_assignments', 'boolean_variables', 'evaluate_phase',
-    'sample_consistent_assignment',
+    'sample_consistent_assignment', 'same_map', 'constraint_system', 'detector_rank', 'unsatisfiable',
     'measurement_report', 'MeasurementReport', 'Measurement',
     'push_hadamards_to_boundary', 'restore_boundary_hadamards', 'has_boundary_hadamard',
     'BOUNDARY_HADAMARD_KEY',

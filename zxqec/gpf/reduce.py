@@ -39,8 +39,9 @@ from .hadamard import restore_boundary_hadamards
 from .matrix import apply_matrix, is_zero_phase, phase_mod2, reduce_rows, split_matrix
 from .normal_form import is_leaf, layout_gpf, to_gpf
 
-__all__ = ['GPFResult', 'reduce_gpf', 'equal_for_all_assignments', 'boolean_variables', 'evaluate_phase',
-           'sample_consistent_assignment']
+__all__ = ['GPFResult', 'reduce_gpf', 'equal_for_all_assignments', 'same_map', 'boolean_variables',
+           'evaluate_phase', 'sample_consistent_assignment', 'constraint_system', 'detector_rank',
+           'unsatisfiable']
 
 
 @dataclass
@@ -85,8 +86,70 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     layout_gpf(h)
     constraints = [phase_mod2(c) for c in constraints]
     constraints = [c for c in constraints if not is_zero_phase(c)]
-    is_zero = any(not isinstance(c, Poly) for c in constraints)
-    return GPFResult(h, constraints, is_zero)
+    return GPFResult(h, constraints, unsatisfiable(constraints))
+
+
+def constraint_system(constraints: Iterable[Any]) -> tuple[list[str], list[list[int]]]:
+    """The constraints as an augmented matrix ``[A | b]`` over GF(2), in row echelon form.
+
+    Each row is one linear relation ``sum of variables = constant``; the last
+    entry of a row is the constant. Non-linear constraints (which the pipeline
+    does not produce -- every spider phase stays affine in the outcomes) are
+    skipped, which keeps the result a sound under-approximation.
+    """
+    names: list[str] = []
+    rows: list[list[int]] = []
+    for c in constraints:
+        for v in (str(v) for v in c.free_vars()) if isinstance(c, Poly) else ():
+            if v not in names:
+                names.append(v)
+    for c in constraints:
+        row = [0] * (len(names) + 1)
+        if isinstance(c, Poly):
+            linear = True
+            for coeff, term in c.terms:
+                if int(coeff) % 2 == 0:
+                    continue
+                if not term.vars:
+                    row[-1] ^= 1
+                elif len(term.vars) == 1 and term.vars[0][1] == 1:
+                    row[names.index(str(term.vars[0][0]))] ^= 1
+                else:
+                    linear = False
+            if not linear:
+                continue
+        elif int(c) % 2:
+            row[-1] = 1
+        else:
+            continue
+        rows.append(row)
+    rank = 0
+    for col in range(len(names)):
+        piv = next((i for i in range(rank, len(rows)) if rows[i][col]), None)
+        if piv is None:
+            continue
+        rows[rank], rows[piv] = rows[piv], rows[rank]
+        for i in range(len(rows)):
+            if i != rank and rows[i][col]:
+                rows[i] = [a ^ b for a, b in zip(rows[i], rows[rank])]
+        rank += 1
+    return names, rows
+
+
+def unsatisfiable(constraints: Iterable[Any]) -> bool:
+    """Whether no assignment satisfies all the constraints, so every branch is the zero map.
+
+    Looking for the constant 1 among the constraints is not enough: ``{c, c + 1}``
+    has no solution although neither entry is constant.
+    """
+    _names, rows = constraint_system(constraints)
+    return any(row[-1] and not any(row[:-1]) for row in rows)
+
+
+def detector_rank(constraints: Iterable[Any]) -> int:
+    """The number of independent relations among the outcomes."""
+    _names, rows = constraint_system(constraints)
+    return sum(1 for row in rows if any(row[:-1]))
 
 
 def _scalar_constraints(g: BaseGraph[VT, ET]) -> list[Any]:
@@ -118,8 +181,12 @@ def _remove_isolated_pairs(g: BaseGraph[VT, ET]) -> list[Any]:
         elif d == 1:
             (w,) = list(g.neighbors(v))
             if (g.type(w) != VertexType.BOUNDARY and not is_leaf(g, w)
-                    and g.vertex_degree(w) == 1 and g.type(w) != g.type(v)):
-                g.remove_vertices([v, w])          # <X(q)|Z(p)> is never zero
+                    and g.vertex_degree(w) == 1 and g.type(w) != g.type(v)
+                    and (is_pauli(g.phase(v)) or is_pauli(g.phase(w)))):
+                # <X(q)|Z(p)> is non-zero as soon as one of the two phases is Pauli; with two
+                # non-Pauli phases it can vanish (Z(pi/2) next to X(3pi/2) is exactly zero), so
+                # such a pair is left in the diagram rather than dropped as a unit scalar
+                g.remove_vertices([v, w])
     return constraints
 
 
@@ -145,9 +212,8 @@ def equal_for_all_assignments(g: BaseGraph[VT, ET], h: BaseGraph[VT, ET],
     Assignments that violate one of ``constraints`` (polynomials that must be
     0) are skipped, since the reduced diagram is only defined on outcomes that
     can occur. ``variables`` defaults to all Boolean variables of both graphs.
+    Assignments for which *both* diagrams are the zero map count as equal.
     """
-    import pyzx
-
     names = list(variables) if variables is not None else boolean_variables(g, h)
     for values in itertools.product([0, 1], repeat=len(names)):
         subs = dict(zip(names, values))
@@ -155,9 +221,27 @@ def equal_for_all_assignments(g: BaseGraph[VT, ET], h: BaseGraph[VT, ET],
             continue
         a = g.substitute_variables(subs) if names else g
         b = h.substitute_variables(subs) if names else h
-        if not pyzx.compare_tensors(a, b, preserve_scalar=preserve_scalar):
+        if not same_map(a, b, preserve_scalar=preserve_scalar):
             return False
     return True
+
+
+def same_map(g: BaseGraph[VT, ET], h: BaseGraph[VT, ET], preserve_scalar: bool = False) -> bool:
+    """Tensor equality of two diagrams without Boolean variables, zero maps included.
+
+    :func:`pyzx.compare_tensors` normalises by the scalar, which is meaningless
+    when the map is zero: a branch that cannot occur then compares unequal to
+    itself. Here two zero maps are equal and a zero map differs from any other.
+    """
+    import numpy
+    import pyzx
+
+    ta = g.to_tensor(preserve_scalar=True) if not isinstance(g, numpy.ndarray) else g
+    tb = h.to_tensor(preserve_scalar=True) if not isinstance(h, numpy.ndarray) else h
+    zero_a, zero_b = bool(numpy.abs(ta).max() < 1e-12), bool(numpy.abs(tb).max() < 1e-12)
+    if zero_a or zero_b:
+        return zero_a and zero_b
+    return bool(pyzx.compare_tensors(ta, tb, preserve_scalar=preserve_scalar))
 
 
 def evaluate_phase(p: Any, assignment: dict[str, int]) -> int:
