@@ -31,7 +31,11 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
-__all__ = ['Block', 'LevelManager']
+__all__ = ['Block', 'LevelManager', 'ROLES']
+
+#: the stage types of fault-tolerant protocols that :meth:`QProgram.summary` knows how to check
+ROLES = ('encoder', 'decoder', 'state preparation', 'syndrome extraction', 'logical gate',
+         'logical measurement', 'injection', 'correction', 'distillation', 'cultivation')
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,7 @@ class Block:
     stages: tuple[int, ...]
     children: tuple['Block', ...] = ()
     name: str | None = None
+    role: str | None = None          #: what the block is for, e.g. 'syndrome extraction' (see ROLES)
 
     def __post_init__(self) -> None:
         if not self.stages:
@@ -112,11 +117,11 @@ class LevelManager:
             raise IndexError("level {} has {} blocks, no block {}".format(level, len(blocks), index))
         return blocks[index]
 
-    def append_stage(self, name: str | None = None) -> int:
+    def append_stage(self, name: str | None = None, role: str | None = None) -> int:
         """Register a new stage; returns its index."""
         i = self.num_stages
         for blocks in self._levels:
-            blocks.append(Block((i,), name=name))
+            blocks.append(Block((i,), name=name, role=role))
         return i
 
     def _level(self, level: int) -> list[Block]:
@@ -131,8 +136,12 @@ class LevelManager:
 
     # -- grouping -----------------------------------------------------------
 
-    def level_up(self, level: int, start: int, end: int, name: str | None = None) -> int:
+    def level_up(self, level: int, start: int, end: int, name: str | None = None,
+                 role: str | None = None) -> int:
         """Group blocks ``start..end`` (inclusive) of ``level`` into one block.
+
+        ``role`` records what the block is for (one of :data:`ROLES`, or any
+        string); :meth:`QProgram.summary` checks the block against it.
 
         Returns the index of the new level, whose blocks are those of ``level``
         with the range replaced by the composite block (at position ``start``).
@@ -142,12 +151,12 @@ class LevelManager:
             raise IndexError("invalid range [{}, {}] for level {} with {} blocks".format(
                 start, end, level, len(blocks)))
         children = tuple(blocks[start:end + 1])
-        composite = Block(tuple(s for c in children for s in c.stages), children, name)
+        composite = Block(tuple(s for c in children for s in c.stages), children, name, role)
         return self._push_level(level, blocks[:start] + [composite] + blocks[end + 1:])
 
     def merge_blocks(self, level: int, i: int, j: int,
                      block_qubits: Callable[[Block], Iterable[int]],
-                     name: str | None = None) -> int | None:
+                     name: str | None = None, role: str | None = None) -> int | None:
         """Merge blocks ``i`` and ``j`` of ``level`` (not necessarily adjacent).
 
         The later block is moved next to the earlier one; this is only sound
@@ -166,7 +175,7 @@ class LevelManager:
         for k in range(lo + 1, hi):
             if later & set(block_qubits(blocks[k])):
                 return None
-        composite = Block(blocks[lo].stages + blocks[hi].stages, (blocks[lo], blocks[hi]), name)
+        composite = Block(blocks[lo].stages + blocks[hi].stages, (blocks[lo], blocks[hi]), name, role)
         new_blocks = blocks[:lo] + [composite] + blocks[lo + 1:hi] + blocks[hi + 1:]
         return self._push_level(level, new_blocks)
 
@@ -181,5 +190,6 @@ class LevelManager:
             else:
                 content = ", ".join("stage {}".format(s) for s in b.stages)
             label = " '{}'".format(b.name) if b.name else ""
-            lines.append("  Block {}{}: [{}]".format(k, label, content))
+            role = " ({})".format(b.role) if b.role else ""
+            lines.append("  Block {}{}{}: [{}]".format(k, label, role, content))
         return "\n".join(lines)

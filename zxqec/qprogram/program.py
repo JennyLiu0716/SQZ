@@ -148,7 +148,8 @@ class QProgram:
             p.add_circuit(circ)
         return p
 
-    def add_circuit(self, circ: Circuit, name: str | None = None, physical: bool = False) -> int:
+    def add_circuit(self, circ: Circuit, name: str | None = None, physical: bool = False,
+                    role: str | None = None) -> int:
         """Append a circuit stage; returns its stage index.
 
         By default the circuit acts on logical qubits. With ``physical=True`` its
@@ -173,7 +174,7 @@ class QProgram:
             relabelled.add_circuit(circ, mask=to_logical)
             circ = relabelled
         st = Stage(len(self._stages), 'circuit', circ.copy(), tuple(self._mapping), name=name)
-        return self._append(st)
+        return self._append(st, role)
 
     def quantum_graph(self) -> BaseGraph:
         """The master graph without the classical-bit wires (a copy).
@@ -226,9 +227,9 @@ class QProgram:
         self._mapping = new
         return self._append(st)
 
-    def _append(self, st: Stage) -> int:
+    def _append(self, st: Stage, role: str | None = None) -> int:
         self._stages.append(st)
-        self.levels.append_stage(st.name)
+        self.levels.append_stage(st.name, role)
         self._graph = None
         return st.index
 
@@ -305,13 +306,49 @@ class QProgram:
 
     # -- levels -------------------------------------------------------------
 
-    def level_up(self, level: int, start: int, end: int, name: str | None = None) -> int:
-        """Group blocks ``start..end`` of ``level`` into one; returns the new level."""
-        return self.levels.level_up(level, start, end, name)
+    def level_up(self, level: int, start: int, end: int, name: str | None = None,
+                 role: str | None = None) -> int:
+        """Group blocks ``start..end`` of ``level`` into one; returns the new level.
 
-    def merge_blocks(self, level: int, i: int, j: int, name: str | None = None) -> int | None:
+        ``role`` says what the block is for ('encoder', 'syndrome extraction',
+        'logical gate', 'injection', ...; see :data:`~zxqec.qprogram.levels.ROLES`);
+        :meth:`summary` checks each block against its role.
+        """
+        return self.levels.level_up(level, start, end, name, role)
+
+    def group_stages(self, groups: Sequence[tuple[Any, ...]]) -> int:
+        """Level up from the stages in one call; returns the new level.
+
+        ``groups`` lists ``(first_stage, last_stage, name, role)`` (``name`` and
+        ``role`` optional) for consecutive, non-overlapping ranges of stages;
+        stages not covered stay blocks of their own.
+        """
+        spans = sorted(((g[0], g[1], g[2] if len(g) > 2 else None, g[3] if len(g) > 3 else None)
+                        for g in groups), key=lambda s: s[0])
+        for (a0, a1, *_), (b0, _b1, *_) in zip(spans, spans[1:]):
+            if b0 <= a1:
+                raise ValueError("groups {}..{} and {}.. overlap".format(a0, a1, b0))
+        level = 0
+        for first, last, name, role in reversed(spans):   # from the end, so indices do not shift
+            if not 0 <= first <= last < self.num_stages:
+                raise IndexError("invalid stage range {}..{}".format(first, last))
+            level = self.levels.level_up(level, first, last, name, role)
+        return level
+
+    def merge_blocks(self, level: int, i: int, j: int, name: str | None = None,
+                     role: str | None = None) -> int | None:
         """Merge two blocks of ``level`` if everything between them acts on other qubits."""
-        return self.levels.merge_blocks(level, i, j, self._block_qubits, name)
+        return self.levels.merge_blocks(level, i, j, self._block_qubits, name, role)
+
+    def summary(self, level: int) -> Any:
+        """One row per block of ``level``: its codes, logical action, measurements and checks.
+
+        Returns a :class:`~zxqec.qprogram.summary.ProgramSummary`; ``print`` it for
+        the table. This is the "level up" of the paper: from the physical stages to
+        what each block does to the encoded information.
+        """
+        from .summary import summarize
+        return summarize(self, level)
 
     def _block_qubits(self, block: Block) -> set[int]:
         out: set[int] = set()
@@ -353,6 +390,67 @@ class QProgram:
         """The sub-diagram of a block of a level, cut out of the master graph (see :meth:`stage_graph`)."""
         g = self._subdiagram(set(self.levels.block(level, index).stages))
         return g if classical else self._without_classical(g)
+
+    def prefix_graph(self, stage: int) -> BaseGraph:
+        """The program cut after ``stage``: stages ``0..stage`` as one diagram, classical wires removed.
+
+        Its inputs are the program's open inputs and its outputs are the qubits
+        alive after ``stage``. ``stage = -1`` gives the bare open inputs.
+        """
+        if not -1 <= stage < self.num_stages:
+            raise IndexError("no stage {} ({} stages)".format(stage, self.num_stages))
+        if stage == -1:
+            g = self._identity_graph()
+            closed = [k for k in range(self.qubits) if k in self._initial_states]
+            ins = [v for v in g.inputs() if get_logical_qubit(g, v) not in closed]
+            outs = [v for v in g.outputs() if get_logical_qubit(g, v) not in closed]
+            g.remove_vertices([v for v in g.vertices() if v not in ins and v not in outs])
+            g.set_inputs(tuple(ins))
+            g.set_outputs(tuple(outs))
+            return g
+        return self._without_classical(self._subdiagram(set(range(stage + 1))))
+
+    def code_at(self, stage: int) -> Any:
+        """The code the qubits are in after ``stage`` (question 1): a :class:`~zxqec.codes.StabilizerCode`.
+
+        Read off the cut :meth:`prefix_graph`; qubits are labelled by their
+        program (logical) index and carry their physical wire as ``positions``.
+        Stabilizer signs are Boolean functions of the outcomes measured so far.
+        """
+        return self._code(self.prefix_graph(stage))
+
+    @staticmethod
+    def _code(g: BaseGraph) -> Any:
+        from ..codes import code_of
+
+        def position(b: Any) -> int:
+            # where the qubit's last vertex before the cut sits; a cut's boundary itself is
+            # drawn at the next vertex, which after a permutation is already on the new wire
+            (w,) = list(g.neighbors(b))
+            return int(g.qubit(w) // 1) if g.type(w) != VertexType.BOUNDARY else int(g.qubit(b) // 1)
+        return code_of(g, labels=[get_logical_qubit(g, b) for b in g.outputs()],
+                       positions=[position(b) for b in g.outputs()])
+
+    def logical_action(self, level: int | None = None, index: int | None = None) -> Any:
+        """What a block -- or, without arguments, the whole program -- does to the encoded qubits.
+
+        Question 2 of the paper. The code before the block is read off the program
+        cut just before its first stage; the code after it off that cut followed by
+        the block itself (so a merged block is not confused by the stages it was
+        slid past). Returns a :class:`~zxqec.codes.LogicalAction`, whose
+        :meth:`~zxqec.codes.LogicalAction.verdict` answers question 3.
+        """
+        from ..codes import logical_action
+        from ..codes.logical import glue
+        if level is None:
+            block_g, first = self.quantum_graph(), 0
+        else:
+            if index is None:
+                raise ValueError("give both level and index, or neither")
+            block_g = self.block_graph(level, index, classical=False)
+            first = self.levels.block(level, index).first
+        before = self.prefix_graph(first - 1)
+        return logical_action(block_g, self._code(before), self._code(glue(before, block_g)))
 
     def measurement_report(self, level: int | None = None, index: int | None = None,
                            context: bool = True, **kwargs: Any) -> Any:

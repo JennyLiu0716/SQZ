@@ -19,10 +19,13 @@
   ZX-diagram on demand and the sub-diagram of any stage or block;
 * :class:`LevelManager` / :class:`Block` -- hierarchical *level-up* of
   consecutive stages into blocks (a syndrome-extraction round, a logical gate)
-  and merging of blocks separated only by stages on other qubits.
+  and merging of blocks separated only by stages on other qubits;
+* :class:`ParityControlled` -- a correction applied when the XOR of some
+  measurement outcomes is 1 (feed-forward), kept symbolic in the diagram.
 """
 
+from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage
 
-__all__ = ['QProgram', 'Stage', 'Block', 'LevelManager']
+__all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled']

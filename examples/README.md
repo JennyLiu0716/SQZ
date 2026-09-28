@@ -19,6 +19,14 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   reduced with `zxqec.gpf` to a Hadamard plus an outcome-dependent Pauli frame and
   24 detectors; all-zero outcomes give exactly `H`. Circuits in `circuits/ft_h/` (with a
   wiring error of the thesis files corrected -- the symbolic reduction found it).
+- [TInjectionWalkthrough.ipynb](TInjectionWalkthrough.ipynb) — **start here.** The running example
+  of the paper, for a reader with no error-correction background: the ideas first (Pauli operators,
+  codes, stabilizers, transversal gates, injection) with pictures, then the three questions answered
+  from the gates alone: which code after every stage (`code_at`), what each block does to the logical
+  qubits (`logical_action`, `summary`), and whether the whole injection is `T` in every run. Ends with
+  four one-line changes to the program and what the tool says about each, including a check wired to
+  the wrong qubit that keeps every run correct but leaves a distance-1 code. Figures come from
+  [teaching_figures.py](teaching_figures.py).
 - [SteaneTInjection.ipynb](SteaneTInjection.ipynb) — a `T` gate injected into the [[7,1,3]] Steane
   code, from the physical circuit to the logical gate. **Written for a reader with no quantum error
   correction background**: it draws the code and its stabilizers, the injection gadget and the
@@ -44,4 +52,4 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   `--block LEVEL I` for one stage or block only, `--phases` to label the spiders with
   their phases, `--save FILE` to write the figure instead of opening a window.
 
-Planned: magic state injection, distillation and cultivation.
+Planned: magic state distillation and cultivation.
