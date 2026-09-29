@@ -34,6 +34,16 @@ parities, so looking at those branches covers every run of the program.
 Pauli correction, and :meth:`LogicalAction.verdict` answers question 3: the
 protocol is *deterministic* if every branch implements the same operation up
 to a Pauli correction that the outcomes determine.
+
+The composite is reduced up to a non-zero scalar, so it cannot tell a logical
+operation from one that also sends part of the code elsewhere: ``T`` on 7 of
+the 15 qubits of the ``[[15,1,3]]`` code gives ``0.75 T^dag`` (up to a phase)
+between the ideal encoders, and ``T^dag`` up to scalar, although a run stays
+in the code with probability 9/16 only. :meth:`LogicalAction.stays_in_code`
+therefore checks the condition under which the logical action is the
+operation on the logical qubits: the block maps the code before it into the
+code after it. A block that fails is reported as leaving the code, not as a
+gate.
 """
 
 from __future__ import annotations
@@ -52,7 +62,11 @@ from ..gpf.reduce import sample_consistent_assignment
 from ..spacetime.subdiagram import get_logical_qubit, set_logical_qubit
 from .code import StabilizerCode
 
-__all__ = ['glue', 'logical_action', 'LogicalAction', 'Branch']
+__all__ = ['glue', 'logical_action', 'LogicalAction', 'Branch', 'TooManyRunsError']
+
+
+class TooManyRunsError(NotImplementedError):
+    """The reduced diagram depends on too many parities of the outcomes to try every combination."""
 
 
 # -- composing diagrams by wire label --------------------------------------------------
@@ -126,7 +140,7 @@ def logical_action(block: BaseGraph, code_in: StabilizerCode, code_out: Stabiliz
     wires those of ``code_out``, matched by label.
     """
     composite = glue(glue(_labelled_encoder(code_in), block), _labelled_decoder(code_out))
-    return LogicalAction(reduce_gpf(composite), code_in, code_out, composite)
+    return LogicalAction(reduce_gpf(composite), code_in, code_out, composite, block=block)
 
 
 @dataclass
@@ -137,6 +151,7 @@ class Branch:
     correction: str | None         #: the Pauli P with (block) = P . (operation); '' for none
     unitary: bool                  #: whether the branch is a unitary (up to scale)
     conditions: list[tuple[str, int]] = field(default_factory=list)  #: (parity, value) defining the class
+    same_as_reference: bool = True  #: equal to the first class of runs up to a Pauli frame
 
     def when(self) -> str:
         """The condition on the outcomes that selects this class of runs."""
@@ -153,6 +168,53 @@ class LogicalAction:
     code_out: StabilizerCode | None
     composite: BaseGraph | None = field(default=None, repr=False)
     _branches: list[Branch] | None = field(default=None, repr=False)
+    block: BaseGraph | None = field(default=None, repr=False)
+    _stays: tuple[bool | None] | None = field(default=None, repr=False)
+
+    def stays_in_code(self) -> bool | None:
+        """Whether the block maps the code before it into the code after it (``None``: not checked).
+
+        Only then is the logical action the operation the block performs on the
+        logical qubits (the proposition on the logical action in the paper). The
+        encoder of the code before, followed by the block, is bent into a state
+        (inputs turned into outputs: its Choi state), and that state's
+        stabilizers common to all runs are read with :func:`~zxqec.codes.code_of`
+        (a conditional logical gate changes the others between runs). For a Pauli ``s``
+        and a map ``D``, ``s D`` is proportional to ``D`` exactly when ``s D = +-D``,
+        so the block stays in the code exactly when every stabilizer of the code
+        after it, with the identity on the bent inputs, is among them up to sign.
+        Runs in which such a stabilizer has the other sign put the image
+        orthogonal to the code; there the logical action is the zero map, which
+        :meth:`branches` already shows. ``None`` if the codes or the block are not
+        known, or the Choi state's code cannot be read.
+        """
+        if self._stays is None:
+            self._stays = (self._check_stays(),)
+        return self._stays[0]
+
+    def _check_stays(self) -> bool | None:
+        from .code import NotACodeError, code_of
+        from .pauli import PauliString
+        if self.block is None or self.code_in is None or self.code_out is None:
+            return None
+        first = glue(_labelled_encoder(self.code_in), self.block)
+        outs = list(first.outputs())
+        where = {get_logical_qubit(first, b): j for j, b in enumerate(outs)}
+        choi = first.copy()
+        choi.set_outputs(tuple(choi.outputs()) + tuple(choi.inputs()))
+        choi.set_inputs(())
+        try:
+            image = code_of(choi, common_to_all_runs=True)
+        except (NotACodeError, NotImplementedError):
+            return None
+        n = len(choi.outputs())
+        for s in self.code_out.stabilizers:
+            x, z = [0] * n, [0] * n
+            for q, a, b in zip(self.code_out.qubits, s.x, s.z):
+                x[where[q]], z[where[q]] = a, b
+            if not image.contains(PauliString.from_arrays(x, z)):
+                return False
+        return True
 
     @property
     def graph(self) -> BaseGraph:
@@ -205,8 +267,12 @@ class LogicalAction:
                 if hasattr(p, 'free_vars') and p.free_vars():
                     polys.setdefault(str(p), p)
         names = sorted(set(boolean_variables(g)) | {str(v) for c in self.detectors for v in c.free_vars()})
-        plist = list(polys.values())[:limit]
-        out = []
+        plist = list(polys.values())
+        if len(plist) > limit:
+            raise TooManyRunsError(
+                "the reduced diagram depends on {} distinct parities of the outcomes; trying all 2^{} "
+                "combinations is above the limit of 2^{}".format(len(plist), len(plist), limit))
+        runs = []
         for values in itertools.product((0, 1), repeat=len(plist)):
             targets = [p + 1 if val else p for p, val in zip(plist, values)]
             try:
@@ -214,12 +280,43 @@ class LogicalAction:
                                                  _rng(values))
             except ValueError:
                 continue
-            m = self.matrix(a)
-            op, corr = self._name(m)
-            out.append(Branch(a, op, corr, _is_unitary(m, self.k_in, self.k_out),
-                              [(str(p), v) for p, v in zip(plist, values)]))
+            runs.append((values, a, self.matrix(a)))
+        out = []
+        if runs:
+            ref = runs[0][2]
+            ref_op, ref_out, ref_in = self._name(ref)
+            effect_inputs = [i for ins, outs, _w in self.parts() if not outs for i in ins]
+            for values, a, m in runs:
+                rel = _relating_pauli(m, ref, self.k_in, self.k_out, effect_inputs)
+                if rel is not None:
+                    op, pout, pin = ref_op, _times(rel[0], ref_out), _times(rel[1], ref_in)
+                else:
+                    op, pout, pin = self._name(m)
+                whole = op is not None and ' (x) ' not in op
+                out.append(Branch(a, op, self._render(pout, pin, whole), _is_unitary(m, self.k_in, self.k_out),
+                                  [(str(p), v) for p, v in zip(plist, values)], rel is not None))
         self._branches = out
         return out
+
+    def _render(self, pout: str, pin: str, whole: bool = False) -> str:
+        """A Pauli correction as text: ``'X'`` for one part, ``'X on qubits 7-13'`` per part otherwise.
+
+        ``whole``: the operation was named as one map, so the correction is on its outputs as a whole.
+        """
+        if whole and set(pin or 'I') <= {'I'}:
+            return '' if set(pout or 'I') <= {'I'} else pout
+        parts = self.parts()
+        texts = []
+        for ins, outs, where in parts:
+            if outs:
+                letters = "".join(pout[i] for i in outs) if pout else ""
+                if letters and set(letters) != {'I'}:
+                    texts.append(letters if len(parts) == 1 else "{} on {}".format(letters, where))
+            else:
+                letters = "".join(pin[i] for i in ins) if pin else ""
+                if letters and set(letters) != {'I'}:
+                    texts.append("outcome flipped by " + (letters if len(parts) == 1 else "{} on {}".format(letters, where)))
+        return ", ".join(texts)
 
     def parts(self) -> list[tuple[list[int], list[int], str]]:
         """How the logical qubits split over the code blocks: ``(inputs, outputs, qubits)`` per part.
@@ -255,48 +352,86 @@ class LogicalAction:
             parts.append((ins, outs, _qubit_range(k)))
         return parts
 
-    def _name(self, m: np.ndarray) -> tuple[str | None, str | None]:
-        op, corr = _identify(m, self.k_in, self.k_out)
+    def _name(self, m: np.ndarray) -> tuple[str | None, str, str]:
+        """Name of the operation and the smallest Paulis ``(on outputs, on inputs)`` that go with it."""
+        op, pout, pin = _identify(m, self.k_in, self.k_out)
         if op is not None:
-            return op, corr
+            return op, pout, pin
         parts = self.parts()
         if len(parts) < 2:
-            return None, None
+            return None, '', ''
         factors = _factorise(m, self.k_in, self.k_out, [(i, o) for i, o, _ in parts])
         if factors is None:
-            return None, None
-        names, corrs = [], []
+            return None, '', ''
+        names = []
+        full_out, full_in = ['I'] * self.k_out, ['I'] * self.k_in
         for (ins, outs, where), f in zip(parts, factors):
-            fo, fc = _identify(f, len(ins), len(outs))
+            fo, fout, fin = _identify(f, len(ins), len(outs))
             if fo is None:
-                return None, None
+                return None, '', ''
             names.append("{} on {}".format(fo, where))
-            if fc:
-                corrs.append("{} on {}".format(fc, where))
-        return " (x) ".join(names), ", ".join(corrs)
+            for i, c in zip(outs, fout):
+                full_out[i] = c
+            for i, c in zip(ins, fin):
+                full_in[i] = c
+        return " (x) ".join(names), "".join(full_out), "".join(full_in)
 
     def operations(self) -> set[str | None]:
         return {b.operation for b in self.branches()}
 
     def is_deterministic(self) -> bool:
-        """Every run does the same operation, up to a Pauli correction fixed by the outcomes."""
-        ops = self.operations()
-        return len(ops) == 1 and None not in ops
+        """Every run does the same operation, up to a Pauli correction fixed by the outcomes.
+
+        Decided on the matrices, not on names: every class of runs equals the first
+        one up to a Pauli on the outputs (or, for a measured qubit, before it).
+        A block that leaves the code (:meth:`stays_in_code`) is not deterministic:
+        it performs no logical operation at all.
+        """
+        if self.stays_in_code() is False:
+            return False
+        br = self.branches()
+        return bool(br) and all(b.same_as_reference for b in br)
 
     def verdict(self) -> str:
         """A one-paragraph answer to question 3."""
         br = self.branches()
         if self.result.is_zero or not br:
             return "never succeeds: every run is the zero map (the detectors contradict each other)"
-        ops = sorted({str(b.operation) for b in br})
+        ops = sorted({str(b.operation) if b.operation else 'a map outside the list of named operations'
+                      for b in br})
+        if self.stays_in_code() is False:
+            return ("leaves the code: the block maps part of the code before it outside the code after it, "
+                    "so it is not a logical operation (between the ideal encoders it looks like {}, "
+                    "but shrunk)".format(" / ".join(ops)))
         if self.is_deterministic():
             corr = sorted({b.correction or 'none' for b in br})
             if corr == ['none']:
                 return "deterministic: every run implements {}".format(ops[0])
             return ("deterministic up to a Pauli frame: every run implements {} followed by a Pauli "
                     "correction ({}) that the outcomes determine".format(ops[0], ", ".join(corr)))
+        basis = self.measured_basis()
+        if basis is not None:
+            return ("a logical measurement in the basis {{{}}}: {}".format(
+                ", ".join(basis), "; ".join("{} {}".format((b.operation or '')[len('projects onto '):], b.when())
+                                            for b in br)))
         parts = ["{} {}".format(b.operation or 'an unrecognised map', b.when()) for b in br]
         return "not deterministic: the operation depends on the outcomes ({})".format("; ".join(parts))
+
+    def measured_basis(self) -> tuple[str, str] | None:
+        """If the classes of runs are the two projections onto a named basis, that basis.
+
+        This is a logical measurement that keeps the qubit, of an observable that
+        need not be a Pauli (the double-check of magic-state cultivation measures
+        one whose eigenstates are ``T^dag|+>`` and ``T^dag|->``).
+        """
+        br = self.branches()
+        names = {b.operation for b in br}
+        if len(br) != 2 or any(b.correction for b in br) or None in names:
+            return None
+        for pair in _BASES:
+            if names == {'projects onto ' + pair[0], 'projects onto ' + pair[1]}:
+                return pair
+        return None
 
     def describe(self) -> str:
         lines = ["logical action: {} -> {} logical qubit(s)".format(self.k_in, self.k_out)]
@@ -341,8 +476,9 @@ def _proportional(a: np.ndarray, b: np.ndarray) -> bool:
 
 
 def _paulis(k: int) -> dict[str, np.ndarray]:
+    """All Pauli strings on ``k`` qubits, lightest first."""
     out = {}
-    for letters in itertools.product('IXYZ', repeat=k):
+    for letters in sorted(itertools.product('IXYZ', repeat=k), key=lambda t: (sum(c != 'I' for c in t), t)):
         m = np.array([[1]])
         for c in letters:
             m = np.kron(m, _PAULI[c])
@@ -350,9 +486,24 @@ def _paulis(k: int) -> dict[str, np.ndarray]:
     return out
 
 
+#: states with their Z-flipped partners, for naming projections: each pair is a basis
+_BASES = [('|0>', '|1>'), ('|+>', '|->'), ('|+i>', '|-i>'), ('T|+>', 'T|->'), ('T^dag|+>', 'T^dag|->')]
+
+
+def _basis_states() -> dict[str, np.ndarray]:
+    out = dict(_STATES)
+    out['|1>'] = np.array([0, 1])
+    for name in ('|+>', '|+i>', 'T|+>', 'T^dag|+>'):
+        out[name.replace('+', '-')] = _Z @ _STATES[name]
+    return out
+
+
 def _library(k_in: int, k_out: int) -> dict[str, np.ndarray]:
     if k_in == k_out == 1:
-        return dict(_ONE)
+        lib = dict(_ONE)
+        for name, v in _basis_states().items():       # a logical measurement that keeps the qubit
+            lib['projects onto ' + name] = np.outer(v, v.conj())
+        return lib
     if k_in == k_out == 2:
         lib = dict(_TWO)
         for (a, ma), (b, mb) in itertools.product(_ONE.items(), repeat=2):
@@ -366,22 +517,62 @@ def _library(k_in: int, k_out: int) -> dict[str, np.ndarray]:
     return {}
 
 
-def _identify(m: np.ndarray, k_in: int, k_out: int) -> tuple[str | None, str | None]:
+def _identify(m: np.ndarray, k_in: int, k_out: int) -> tuple[str | None, str, str]:
+    """``(name, Pauli on outputs, Pauli on inputs)`` with ``m`` = Pauli . named . Pauli, smallest Pauli first."""
     if k_in == k_out == 0:
-        return ('a non-zero scalar' if abs(m).max() > 1e-9 else 'zero'), ''
+        return ('a non-zero scalar' if abs(m).max() > 1e-9 else 'zero'), '', ''
     lib = _library(k_in, k_out)
+    # the smallest correction wins: X.T|+> is T^dag|+>, and is named so, not "T|+> with correction X"
     if k_out == 0:                             # an effect: the Pauli acts before it
-        for name, g in lib.items():
-            for pn, p in _paulis(k_in).items():
+        for pn, p in _paulis(k_in).items():
+            for name, g in lib.items():
                 if _proportional(m, g @ p):
-                    return name, ('' if set(pn) <= {'I'} else 'outcome flipped by ' + pn)
-        return None, None
-    paulis = _paulis(k_out)
-    for name, g in lib.items():
-        for pn, p in paulis.items():
+                    return name, '', pn
+        return None, '', ''
+    for pn, p in _paulis(k_out).items():
+        for name, g in lib.items():
             if _proportional(m, p @ g):
-                return name, ('' if set(pn) <= {'I'} else pn)
-    return None, None
+                return name, pn, 'I' * k_in
+    return None, '', ''
+
+
+def _relating_pauli(m: np.ndarray, ref: np.ndarray, k_in: int, k_out: int,
+                    effect_inputs: list[int]) -> tuple[str, str] | None:
+    """Paulis ``(on outputs, on the inputs of measured parts)`` with ``m`` proportional to ``Q . ref . Q'``."""
+    outs = _paulis(k_out) if k_out else {'': np.array([[1]])}
+    ins: dict[str, np.ndarray] = {}
+    for letters in itertools.product('IXYZ', repeat=len(effect_inputs)):
+        full = ['I'] * k_in
+        for i, c in zip(effect_inputs, letters):
+            full[i] = c
+        key = ''.join(full)
+        mat = np.array([[1]])
+        for c in full:
+            mat = np.kron(mat, _PAULI[c])
+        ins[key] = mat
+    identity_in = 'I' * k_in
+    if identity_in not in ins:
+        ins[identity_in] = np.eye(2 ** k_in)
+    # a frame on the outputs first; a flipped outcome of a measured part only if there is none
+    for qo, po in outs.items():
+        if _proportional(m, po @ ref):
+            return qo, identity_in
+    for qo, po in outs.items():
+        for qi, pi in ins.items():
+            if _proportional(m, po @ ref @ pi):
+                return qo, qi
+    return None
+
+
+def _times(a: str, b: str) -> str:
+    """The product of two Pauli strings, up to phase (either may be empty for the identity)."""
+    if not a:
+        return b
+    if not b:
+        return a
+    bits = {'I': (0, 0), 'X': (1, 0), 'Z': (0, 1), 'Y': (1, 1)}
+    name = {v: k for k, v in bits.items()}
+    return ''.join(name[(bits[x][0] ^ bits[y][0], bits[x][1] ^ bits[y][1])] for x, y in zip(a, b))
 
 
 def _factorise(m: np.ndarray, k_in: int, k_out: int,

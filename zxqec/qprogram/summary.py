@@ -54,6 +54,10 @@ class BlockSummary:
         return all(passed for passed, _ in self.checks)
 
     def operation(self) -> str:
+        if self.action is None:
+            return "?"
+        if self.action.stays_in_code() is False:
+            return "leaves the code"
         ops = sorted({str(b.operation) for b in self.action.branches()})
         return " / ".join(ops) if ops else "zero"
 
@@ -63,7 +67,8 @@ class BlockSummary:
             ", ".join(map(str, self.stages)))]
         lines.append("  code before: " + _codes(self.code_in))
         lines.append("  code after:  " + _codes(self.code_out))
-        lines.append("  logical action: " + self.action.verdict())
+        if self.action is not None:
+            lines.append("  logical action: " + self.action.verdict())
         if self.measurements is not None and self.measurements.measurements:
             kinds: dict[str, int] = {}
             for m in self.measurements.measurements.values():
@@ -91,7 +96,7 @@ class ProgramSummary:
             rows.append((
                 "{} {}".format(b.index, b.label), b.role or "-",
                 _short(b.code_in), _short(b.code_out), b.operation(),
-                "yes" if b.action.is_deterministic() else "no",
+                "?" if b.action is None else "yes" if b.action.is_deterministic() else "no",
                 "ok" if b.ok else "{} problem(s)".format(sum(1 for p, _ in b.checks if not p))))
         widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
         return "\n".join("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in rows)
@@ -101,21 +106,30 @@ class ProgramSummary:
 
 
 def summarize(program: Any, level: int) -> ProgramSummary:
-    from ..codes import logical_action
+    from ..codes import NotACodeError, logical_action
     from ..codes.logical import glue
     whole = program.measurement_report()
     out = []
     for i, block in enumerate(program.levels.blocks(level)):
         g = program.block_graph(level, i, classical=False)
         before = program.prefix_graph(block.first - 1)
-        code_in = program._code(before)
-        code_out = program._code(glue(before, g))
-        action = logical_action(g, code_in, code_out)
         names = [m.name for m in whole.measurements.values() if m.stage in block.stages]
         meas = whole.restrict(names, scope="block {}".format(i)) if names else None
         label = block.name or str(block)
+        code_in = code_out = action = None
+        problem = None
+        try:
+            code_in = program._code(before)
+            code_out = program._code(glue(before, g))
+            action = logical_action(g, code_in, code_out)
+        except (NotACodeError, NotImplementedError) as e:  # e.g. a code that depends on the run
+            if code_out is None:
+                problem = "the code {} the block could not be identified: {}".format(
+                    "before" if code_in is None else "after", e)
+            else:
+                problem = "the logical action could not be computed: {}".format(e)
         s = BlockSummary(i, label, block.role, block.stages, code_in, code_out, action, meas)
-        s.checks = _checks(s)
+        s.checks = [(False, problem)] if problem else _checks(s)
         out.append(s)
     return ProgramSummary(level, out)
 
@@ -128,6 +142,9 @@ def _checks(b: BlockSummary) -> list[tuple[bool, str]]:
     if act.result.is_zero:
         return [(False, "the block is the zero map in this program: its detectors contradict each other")]
     ops = {br.operation for br in act.branches()}
+    if act.stays_in_code() is False:
+        checks.append((False, "maps part of the code before it outside the code after it, so it is not a "
+                              "logical operation"))
     if None in ops:
         checks.append((False, "in some run the block does something that is not a recognised logical "
                               "operation (for example it leaves the code)"))
@@ -164,7 +181,30 @@ def _checks(b: BlockSummary) -> list[tuple[bool, str]]:
                        "{}".format(" / ".join(sorted(map(str, ops))))))
     elif role == 'injection':
         checks.append((act.is_deterministic(), act.verdict()))
+    elif role == 'cultivation':
+        # the double-check of magic-state cultivation: measure the logical qubit in the basis of
+        # the magic state, with an outcome that earlier outcomes predict
+        checks.append((b.code_in.same_code_as(b.code_out), "stays in the same code"))
+        basis = act.measured_basis()
+        checks.append((basis is not None, "measures the logical qubit in the basis {{{}}}".format(
+            ", ".join(basis)) if basis else "is not a logical measurement in a named basis"))
+        if basis is not None and b.measurements is not None:
+            deciding = sorted({str(v) for br in act.branches() for cond, _ in br.conditions
+                               for v in _variables(cond)})
+            kinds = {m.name: m.kind for m in b.measurements.measurements.values()}
+            unchecked = [v for v in deciding if kinds.get(v) not in ('fixed', 'tied')]
+            checks.append((not unchecked,
+                           "its outcome ({}) is predicted by earlier outcomes, so the check can reject a "
+                           "wrong state".format(", ".join(deciding)) if not unchecked else
+                           "outcome(s) {} are not predicted by earlier outcomes: the check cannot tell a "
+                           "right state from a wrong one".format(", ".join(unchecked))))
     return checks
+
+
+def _variables(text: str) -> list[str]:
+    """The outcome names in a parity written as text, e.g. ``'c[5] + c[24]'``."""
+    import re
+    return re.findall(r'[A-Za-z_][A-Za-z0-9_]*\[\d+\]|s\d+_r\d+', text)
 
 
 def _when(outcomes: dict) -> str:
@@ -181,6 +221,8 @@ def _n(code: Any) -> int:
 
 
 def _short(code: Any) -> str:
+    if code is None:
+        return "?"
     parts = []
     for blk in code.blocks():
         n, k, d = blk.parameters
@@ -189,6 +231,8 @@ def _short(code: Any) -> str:
 
 
 def _codes(code: Any) -> str:
+    if code is None:
+        return "not identified"
     parts = []
     for blk in code.blocks():
         n, k, d = blk.parameters

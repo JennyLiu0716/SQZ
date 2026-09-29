@@ -21,11 +21,14 @@
   consecutive stages into blocks (a syndrome-extraction round, a logical gate)
   and merging of blocks separated only by stages on other qubits;
 * :class:`ParityControlled` -- a correction applied when the XOR of some
-  measurement outcomes is 1 (feed-forward), kept symbolic in the diagram.
+  measurement outcomes is 1 (feed-forward), kept symbolic in the diagram;
+* :func:`program_from_stim` -- a program from a circuit in Stim's text format.
 """
 
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage
+from .stim_text import StimCircuit, parse_stim, program_from_stim
 
-__all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled']
+__all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled',
+           'StimCircuit', 'parse_stim', 'program_from_stim']

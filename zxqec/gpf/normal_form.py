@@ -37,11 +37,14 @@ also carry phases:
 thesis's Algorithm 2 (a phase-free skeleton plus gadgets).
 
 Hadamard edges are pushed to the boundary wires beforehand (see
-:mod:`zxqec.gpf.hadamard`), so the input may be any diagram in the
-Clifford+phases fragment whose Hadamards can be absorbed by recolouring.
+:mod:`zxqec.gpf.hadamard`). Those that cannot be absorbed by recolouring, because
+they close a cycle with an odd number of Hadamards, become ``CZ`` s written as
+``pi/2`` phase gadgets, so the input may be any diagram of Z- and X-spiders.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from pyzx.graph.base import BaseGraph, VT, ET
 from pyzx.rewrite_rules import bialgebra, check_bialgebra
@@ -80,12 +83,14 @@ def _touches(g: BaseGraph[VT, ET], v: VT, boundaries: set[VT]) -> bool:
 # -- the algorithm ----------------------------------------------------------
 
 def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
-           max_steps: int | None = None) -> BaseGraph[VT, ET]:
+           max_steps: int | None = None, cz_gadgets: bool = True) -> BaseGraph[VT, ET]:
     """Return a copy of ``g`` in generalized parity form with phases.
 
     Steps (Algorithm 2 of the thesis, generalised):
 
-    1. push Hadamard edges to the boundary wires; fuse spiders;
+    1. push Hadamard edges to the boundary wires, writing those that close an
+       odd-Hadamard cycle as ``CZ`` phase gadgets (``cz_gadgets=False`` raises
+       ``ValueError`` instead, the behaviour for CSS-only diagrams); fuse spiders;
     2. isolate phases into gadgets: all non-zero phases if ``isolate_paulis``,
        otherwise only non-Pauli ones;
     3. skeleton reduction: repeatedly apply the (Boolean) bialgebra rule to an
@@ -102,7 +107,7 @@ def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
         if h.type(v) not in (VertexType.Z, VertexType.X, VertexType.BOUNDARY):
             raise ValueError("to_gpf: vertex {} has unsupported type {}".format(v, h.type(v)))
     _presimplify(h)                       # identities and same-colour pairs first: they can
-    push_hadamards_to_boundary(h)         # only shrink the cycle space Algorithm 1 has to solve
+    push_hadamards_to_boundary(h, cz_gadgets)   # only shrink the cycle space Algorithm 1 solves
     spider_simp(h)
     h.remove_isolated_vertices()
 
@@ -142,16 +147,40 @@ def _isolate_phases(g: BaseGraph[VT, ET], isolate_paulis: bool) -> None:
         if g.vertex_degree(v) == 0:
             continue                          # a scalar; removed by the callers' clean-up
         if g.vertex_degree(v) == 1 and not _on_boundary(g, v):
-            g.set_vdata(v, GPF_ROLE_KEY, LEAF)  # already a leaf hanging off another spider
-            continue
+            (hub,) = list(g.neighbors(v))
+            if not _on_boundary(g, hub) and not any(is_leaf(g, w) for w in g.neighbors(hub)):
+                g.set_vdata(v, GPF_ROLE_KEY, LEAF)  # already a leaf hanging off another spider
+                continue
+            # otherwise it is not a phase gadget: next to a boundary the leaf's bit is summed
+            # over (a map on that wire, not a phase), and with a second leaf the hub fixes only
+            # the parity of the two leaf bits. The spider stays a bit and gets its own gadget.
         # a degree-one spider on a boundary wire is a state or effect, not a gadget leaf: its
         # phase is unfused onto a gadget below, so that the wire's spider stays phase-free
-        g.set_phase(v, 0)
+        keep = 0 if isolate_paulis else _pauli_part(p)
+        g.set_phase(v, keep)
+        p = p - keep if keep else p
         stem = g.add_vertex(toggle_vertex(g.type(v)), g.qubit(v), g.row(v) + 0.5)
         leaf = g.add_vertex(g.type(v), g.qubit(v), g.row(v) + 1.0, p)
         g.set_vdata(leaf, GPF_ROLE_KEY, LEAF)
         g.add_edge((v, stem))
         g.add_edge((stem, leaf))
+
+
+def _pauli_part(p: Any) -> Any:
+    """The parity of outcomes in a phase ``a + c_1 + ... + c_m`` (units of pi), or 0.
+
+    A phase such as ``pi/2 + c`` -- a ``CZ`` end on a spider that also carries an
+    outcome -- keeps its Pauli part ``c`` on the spider and isolates only ``pi/2``.
+    Phases of any other shape are isolated whole.
+    """
+    if not hasattr(p, 'terms'):
+        return 0
+    from .gadgets import _split_phase
+    try:
+        const, _names = _split_phase(p)
+    except ValueError:
+        return 0
+    return p - const if const else 0
 
 
 def _on_boundary(g: BaseGraph[VT, ET], v: VT) -> bool:
@@ -272,6 +301,10 @@ def is_gpf(g: BaseGraph[VT, ET]) -> bool:
             return False
         if g.type(v) != VertexType.BOUNDARY and not is_leaf(g, v) and not is_pauli(g.phase(v)):
             return False                      # (G3)/(G4): non-Pauli phases live on leaves
+        if is_leaf(g, v):
+            (hub,) = list(g.neighbors(v))
+            if _on_boundary(g, hub) or sum(1 for w in g.neighbors(hub) if is_leaf(g, w)) > 1:
+                return False                  # a phase gadget: one leaf, and a hub away from the boundary
     return True
 
 

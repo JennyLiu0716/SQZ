@@ -26,6 +26,7 @@
   for the outcomes of a given run.
 """
 
+from .gadgets import phase_polynomial, simplify_gadgets
 from .hadamard import (BOUNDARY_HADAMARD_KEY, has_boundary_hadamard, push_hadamards_to_boundary,
                        restore_boundary_hadamards)
 from .matrix import SplitMatrix, apply_matrix, reduce_rows, split_matrix
@@ -42,5 +43,5 @@ __all__ = [
     'sample_consistent_assignment', 'same_map', 'constraint_system', 'detector_rank', 'unsatisfiable',
     'measurement_report', 'MeasurementReport', 'Measurement',
     'push_hadamards_to_boundary', 'restore_boundary_hadamards', 'has_boundary_hadamard',
-    'BOUNDARY_HADAMARD_KEY',
+    'BOUNDARY_HADAMARD_KEY', 'simplify_gadgets', 'phase_polynomial',
 ]

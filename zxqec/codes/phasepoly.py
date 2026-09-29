@@ -45,9 +45,9 @@ Poly = dict  # Monomial -> Fraction (mod 2)
 
 
 class Gadget:
-    """A Z-phase gadget: leaf angle, the Z-spider bits it reads, and the outcome parity on its hub."""
+    """A Z-phase gadget: leaf angle, the Z-spider bits it reads (any hashable names), and the outcome parity on its hub."""
 
-    def __init__(self, angle: Fraction, bits: list[str], sign_vars: list[str], sign_const: int) -> None:
+    def __init__(self, angle: Fraction, bits: list[Any], sign_vars: list[str], sign_const: int) -> None:
         self.angle = Fraction(angle) % 2
         self.bits = list(bits)
         self.sign_vars = list(sign_vars)

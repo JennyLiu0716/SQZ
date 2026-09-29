@@ -201,3 +201,161 @@ def test_summary_of_steane_injection_at_two_levels():
     coarse = p.level_up(fine, 1, 5, name='inject T', role='injection')
     s2 = p.summary(coarse)
     assert s2.ok and [b.operation() for b in s2.blocks] == ['I', 'T']
+
+
+# -- the edge of the CSS fragment ------------------------------------------------------------
+
+def _steane_then(*gates):
+    from pyzx.circuit.gates import S
+    c = Circuit(7)
+    for g in steane_encoder(list(range(7))):
+        c.add_gate(g)
+    for g in gates:
+        c.add_gate(g)
+    return circuit_to_graph(c, initialize_qubits=[q != 3 for q in range(7)])
+
+
+def test_one_s_gate_gives_the_steane_code_conjugated_by_s():
+    from pyzx.circuit.gates import S
+    # one S gate makes the Steane code non-CSS: X on qubit 0 becomes Y. The code is still
+    # [[7,1,3]], but no choice of Hadamards makes it CSS; code_of reads the mixed stabilizers.
+    steane = code_of(_steane_then())
+    code = code_of(_steane_then(S(0)))
+    assert code.parameters == (7, 1, 3) and not code.is_css
+    conjugated = []
+    for p in steane.stabilizers:
+        z = list(p.z)
+        z[0] ^= p.x[0]                           # S X S^dag = Y, S Z S^dag = Z
+        conjugated.append(PauliString.from_arrays(p.x, z, p.sign))
+    assert all(code.contains(p) for p in conjugated)
+    assert any('Y' in p.letters for p in code.stabilizers)
+
+
+def test_transversal_s_keeps_the_steane_code_and_is_clifford():
+    from pyzx.circuit.gates import S
+    code = code_of(_steane_then(*[S(q) for q in range(7)]))
+    assert code.parameters == (7, 1, 3)
+    assert not code.non_clifford                    # S is Clifford: no non-Clifford logical content
+
+
+def test_t_on_one_qubit_is_non_clifford_not_non_css():
+    code = code_of(_steane_then(T(0)))              # T breaks stabilizers in a non-Clifford way
+    assert code.non_clifford
+
+
+def test_summary_reports_what_it_cannot_compute_instead_of_crashing():
+    # the code after one S is read (a non-CSS [[7,1,3]]), but its ideal encoder, and so the
+    # logical action of the block, is only built for CSS codes so far
+    from pyzx.circuit.gates import S
+    p = QProgram(7, initial_states={q: '0' for q in range(7) if q != 3})
+    c = Circuit(7)
+    for g in steane_encoder(list(range(7))):
+        c.add_gate(g)
+    p.add_circuit(c, name='encode')
+    s1 = Circuit(7)
+    s1.add_gate(S(0))
+    p.add_circuit(s1, name='one S')
+    s = p.summary(0)
+    assert s.blocks[0].ok
+    assert not s.blocks[1].ok
+    assert s.blocks[1].code_out.parameters == (7, 1, 3) and not s.blocks[1].code_out.is_css
+    assert any('logical action' in msg and 'CSS' in msg for ok, msg in s.blocks[1].checks if not ok)
+
+
+# -- a block must map the code into the code: the logical action is computed up to a scalar ---------
+
+def _reed_muller_15():
+    """The [[15,1,3]] quantum Reed-Muller code: X-stabilizers are the rows of the 4 x 15 matrix whose
+    column j is the binary expansion of j + 1, the logical X is all ones."""
+    from pyzx.graph import Graph
+    from pyzx.utils import VertexType
+    rows = np.array([[((j + 1) >> b) & 1 for j in range(15)] for b in range(4)], dtype=np.uint8)
+    g = Graph()
+    xs, outs = [], []
+    for j in range(15):
+        x = g.add_vertex(VertexType.X, j, 2)
+        o = g.add_vertex(VertexType.BOUNDARY, j, 3)
+        g.add_edge((x, o))
+        xs.append(x)
+        outs.append(o)
+    i = g.add_vertex(VertexType.BOUNDARY, 0, 0)
+    zl = g.add_vertex(VertexType.Z, 0, 1)
+    g.add_edge((i, zl))
+    for x in xs:
+        g.add_edge((zl, x))
+    for r in rows:
+        z = g.add_vertex(VertexType.Z, 1, 1)
+        for j in np.flatnonzero(r):
+            g.add_edge((z, xs[j]))
+    g.set_inputs((i,))
+    g.set_outputs(tuple(outs))
+    return code_of(g)
+
+
+def _t_on(code, qubits):
+    from zxqec.codes.logical import set_logical_qubit
+    c = Circuit(code.n)
+    for q in qubits:
+        c.add_gate(T(q))
+    b = c.to_graph()
+    for v, q in zip(b.inputs(), code.qubits):
+        set_logical_qubit(b, v, q)
+    for v, q in zip(b.outputs(), code.qubits):
+        set_logical_qubit(b, v, q)
+    return b
+
+
+def test_transversal_t_on_the_15_qubit_code_is_logical_t_dagger():
+    from zxqec.codes import logical_action
+    code = _reed_muller_15()
+    assert code.parameters == (15, 1, 3)
+    act = logical_action(_t_on(code, range(15)), code, code)
+    assert act.stays_in_code() is True
+    assert act.operations() == {'T^dag'} and act.is_deterministic()
+
+
+def test_t_on_part_of_the_code_leaves_it_instead_of_being_named_a_gate():
+    # between the ideal encoders this block is 0.75 T^dag up to a phase: up to scalar it looks like
+    # T^dag, but a run stays in the code with probability 9/16 only
+    from zxqec.codes import logical_action
+    code = _reed_muller_15()
+    act = logical_action(_t_on(code, range(7)), code, code)
+    assert act.stays_in_code() is False
+    assert not act.is_deterministic()
+    assert act.verdict().startswith("leaves the code")
+
+
+def test_every_block_of_the_steane_injection_stays_in_its_code():
+    # including the correction, whose conditional S changes the logical part of some stabilizers of
+    # the check's Choi state between runs; only the stabilizers common to all runs are needed
+    s = steane_t_injection().summary(0)
+    assert all(b.action.stays_in_code() is True for b in s.blocks)
+
+
+def test_a_code_that_differs_between_runs_can_be_read_as_its_common_part():
+    from pyzx.circuit.gates import Measurement
+    from zxqec.codes import OutcomeDependentCodeError
+    from zxqec.qprogram import ParityControlled
+    p = QProgram(8, bits=1, initial_states={**{q: '0' for q in range(7) if q != 3}, 7: '+'})
+    c = Circuit(8, bit_amount=1)
+    for gate in steane_encoder(list(range(7))):
+        c.add_gate(gate)
+    c.add_gate(Measurement(7, result_symbol='m'))
+    p.add_circuit(c, name='encode, and a random bit')
+    s = Circuit(8, bit_amount=1)
+    s.add_gate(ParityControlled('S', 0, ['m']))
+    p.add_circuit(s, name='S if m = 1')
+    g = p.prefix_graph(1)
+    with pytest.raises(OutcomeDependentCodeError):
+        code_of(g)
+    common = code_of(g, common_to_all_runs=True)
+    # the Z-type stabilizers do not change, and the X-types through qubit 0 do (X becomes Y there)
+    steane = code_of(_steane_then())
+    assert all(common.contains(z) for z in steane.stabilizers if not any(z.x))
+    assert not any(common.contains(x) for x in steane.stabilizers if x.x[0])
+
+
+def test_every_block_of_the_fold_transversal_h_stays_in_its_code():
+    p = F.fold_transversal_h()
+    s = p.summary(p.group_stages(FOLD_GROUPS))
+    assert all(b.action.stays_in_code() is True for b in s.blocks)

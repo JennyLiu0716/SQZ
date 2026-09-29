@@ -28,11 +28,21 @@ layers (Kissinger, "Phase-free ZX diagrams are CSS codes", 2022):
   row; the phases of the output X-spiders give their signs;
 * a Hadamard recorded on an output wire swaps ``X`` and ``Z`` on that qubit.
 
+Codes that are not CSS in any Hadamard frame (the ``[[5,1,3]]`` code, or the
+Steane code after one ``S``) have ``pi/2`` phase gadgets in the reduced diagram.
+Flipping the bits of a combination ``a`` of internal Z-spiders then changes the
+gadgets' phase by ``c + sum_i d_i y_i`` (a constant, and a Pauli term in the bits
+``y`` of the Z-layer). With ``w`` the Z-string on the outputs for which
+``w . (y A) = d . y`` (``A`` the rows of the Z-layer), the operator
+``Z^w X^{aM}`` fixes the image, so the stabilizer has an X part and a Z part:
+this is the ``[H_X | H_X G]`` block of the tableau normal form of a stabilizer
+code. Its sign accounts for the ``i`` of each ``Y``.
+
 A non-Clifford phase gadget hanging from internal Z-spiders means the
 corresponding X-strings are *not* stabilizers of the image (flipping the bit
-under the gadget changes its phase); they are counted as logical instead. This
-is how the prefix of a magic-state injection comes out as "the Steane code,
-holding a non-stabilizer logical state".
+under the gadget changes its phase by something that is not a Pauli); they are
+counted as logical instead. This is how the prefix of a magic-state injection
+comes out as "the Steane code, holding a non-stabilizer logical state".
 
 The logical operators are chosen canonically from the stabilizer group alone
 (pure ``X`` and pure ``Z`` representatives for a CSS code), so two cuts of a
@@ -57,11 +67,21 @@ from .pauli import phase_sum as _sum
 from .gf2 import as_matrix, complement_basis, in_rowspace, nullspace, reduce_mod, rref, solve
 from .pauli import PauliString
 
-__all__ = ['StabilizerCode', 'NotACodeError', 'code_of']
+__all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of']
 
 
 class NotACodeError(ValueError):
     """The diagram is not a Clifford isometry, so its image is not a stabilizer code."""
+
+
+class OutcomeDependentCodeError(NotImplementedError):
+    """The stabilizers themselves, not only their signs, depend on measurement outcomes.
+
+    A Clifford phase controlled by an outcome (an ``S`` applied in some runs
+    only) gives an X stabilizer a ``Z`` part in those runs only, so different
+    runs are in different codes. Reading the code run by run is not
+    implemented; this is raised instead of reporting a wrong code.
+    """
 
 
 # -- the code ------------------------------------------------------------------
@@ -71,10 +91,12 @@ class StabilizerCode:
     """A stabilizer code on labelled qubits, with signs and canonical logical operators.
 
     The generators are stored by their type in the frame in which the diagram was
-    read (``hadamard[j]`` records a Hadamard on qubit ``j``), so that products of
-    generators never pick up factors of ``i``: ``sx`` rows are X-type and ``sz``
-    rows Z-type in that frame. :attr:`stabilizers` gives them as physical Pauli
-    strings.
+    read (``hadamard[j]`` records a Hadamard on qubit ``j``): ``sx`` rows are X-type
+    and ``sz`` rows Z-type in that frame. For a code that is not CSS in that frame,
+    ``sx_z`` gives the Z part of each X-type generator, which is then the Pauli
+    string with letters ``X``, ``Y``, ``Z`` where ``(sx, sx_z)`` is ``(1,0)``,
+    ``(1,1)``, ``(0,1)`` and sign ``(-1)^sx_signs``. :attr:`stabilizers` gives the
+    generators as physical Pauli strings.
     """
     qubits: tuple[Any, ...]
     hadamard: tuple[int, ...]
@@ -87,6 +109,7 @@ class StabilizerCode:
     non_clifford: bool = False
     positions: tuple[Any, ...] | None = None
     nonclifford_columns: frozenset = frozenset()   #: qubits reached by a non-Clifford phase gadget
+    sx_z: np.ndarray | None = None                 #: Z part of the X-type generators (non-CSS codes)
     _distance: Any = field(default=None, repr=False)
 
     # -- basic data -----------------------------------------------------------
@@ -102,14 +125,22 @@ class StabilizerCode:
     @property
     def stabilizers(self) -> list[PauliString]:
         """Independent generators as physical Pauli strings, X-type ones first."""
-        return ([self._physical(row, s, 'X') for row, s in zip(self.sx, self.sx_signs)]
+        zs: list[Any] = list(self.sx_z) if self.sx_z is not None and self._mixed else [None] * len(self.sx)
+        return ([self._physical(row, s, 'X', zr) for row, s, zr in zip(self.sx, self.sx_signs, zs)]
                 + [self._physical(row, s, 'Z') for row, s in zip(self.sz, self.sz_signs)])
 
-    def _physical(self, row: np.ndarray, sign: Any, kind: str) -> PauliString:
+    @property
+    def _mixed(self) -> bool:
+        """Whether some X-type generator has a Z part in the frame (the code is not CSS there)."""
+        return self.sx_z is not None and bool(self.sx_z.size) and bool(self.sx_z.any())
+
+    def _physical(self, row: np.ndarray, sign: Any, kind: str, zrow: np.ndarray | None = None) -> PauliString:
         h = np.array(self.hadamard, dtype=np.uint8)
-        a = row & (1 - h)
-        b = row & h
-        return PauliString.from_arrays(a, b, sign) if kind == 'X' else PauliString.from_arrays(b, a, sign)
+        x = row if kind == 'X' else np.zeros_like(row)
+        z = (zrow if zrow is not None else np.zeros_like(row)) if kind == 'X' else row
+        flips = int((x & z & h).sum())                 # a Hadamard swaps X and Z, and H Y H = -Y
+        return PauliString.from_arrays((x & (1 - h)) | (z & h), (z & (1 - h)) | (x & h),
+                                       _sum([sign, flips]) if flips else sign)
 
     def symplectic(self) -> np.ndarray:
         """The stabilizer generators as rows ``(x | z)`` over GF(2), signs dropped."""
@@ -129,8 +160,12 @@ class StabilizerCode:
 
         Typically ancillas that are prepared but not yet used. Values are
         ``'0'``, ``'1'``, ``'+'``, ``'-'``, or ``'|c>'`` / ``'|(-1)^c>'`` style
-        strings when the state depends on an outcome.
+        strings when the state depends on an outcome; ``'+i'`` and ``'-i'`` for the
+        eigenstates of ``Y`` (codes that are not CSS).
         """
+        if self._mixed:
+            return {self.qubits[j]: _state_label(letter, sign)
+                    for j, (letter, sign) in self._single_qubit_stabilizers().items()}
         out: dict[Any, str] = {}
         logical_support = {j for p in self.logical_x + self.logical_z for j in p.support}
         for j in range(self.n):
@@ -160,6 +195,8 @@ class StabilizerCode:
         Generators are first cleared on the dropped columns by multiplying with the
         single-qubit stabilizers there (keeping track of signs), then made independent.
         """
+        if self._mixed:
+            return self._restricted_mixed(list(columns))
         drop = [j for j in range(self.n) if j not in columns]
         sx, sxs = _clear_columns(self.sx, self.sx_signs, drop)
         sz, szs = _clear_columns(self.sz, self.sz_signs, drop)
@@ -181,6 +218,78 @@ class StabilizerCode:
             non_clifford=bool(nc),
             positions=tuple(self.positions[j] for j in cols) if self.positions else None,
             nonclifford_columns=nc)
+
+    def _single_qubit_stabilizers(self) -> dict[int, tuple[str, Any]]:
+        """Qubits outside every logical operator whose single-qubit Pauli is a stabilizer.
+
+        Values are the physical letter and its sign. For codes with mixed generators.
+        """
+        n = self.n
+        sxz = self.sx_z if self.sx_z is not None else np.zeros_like(self.sx)
+        logical_support = {j for p in self.logical_x + self.logical_z for j in p.support}
+        out: dict[int, tuple[str, Any]] = {}
+        for j in range(n):
+            if j in logical_support:
+                continue
+            found = _frame_single(j, self.sx, sxz, self.sx_signs, self.sz, self.sz_signs, n)
+            if found is None:
+                continue
+            letter, sign = found
+            if self.hadamard[j]:
+                letter, sign = {'X': ('Z', sign), 'Z': ('X', sign), 'Y': ('Y', _sum([sign, 1]))}[letter]
+            out[j] = (letter, sign)
+        return out
+
+    def _restricted_mixed(self, columns: list[int]) -> 'StabilizerCode':
+        """:meth:`restricted` for a code with mixed generators (see :attr:`sx_z`)."""
+        n = self.n
+        sxz = self.sx_z if self.sx_z is not None else np.zeros_like(self.sx)
+        zero = np.zeros(n, dtype=np.uint8)
+        gens = [(x.copy(), z.copy(), sg) for x, z, sg in zip(self.sx, sxz, self.sx_signs)]
+        gens += [(zero.copy(), z.copy(), sg) for z, sg in zip(self.sz, self.sz_signs)]
+        drop = [j for j in range(n) if j not in columns]
+        singles: dict[tuple[int, str], tuple[np.ndarray, np.ndarray, Any]] = {}
+        for j in drop:
+            e = np.zeros(n, dtype=np.uint8)
+            e[j] = 1
+            c = _combination(self.sx, e)
+            if c is not None:
+                x, z, sg = _combine(self.sx, sxz, self.sx_signs, c, n)
+                single = _reduce_z_part(x, z, sg, self.sz, self.sz_signs, n, target=e)
+                if single is not None:
+                    singles[(j, 'x')] = single
+            c = _combination(self.sz, e)
+            if c is not None:
+                singles[(j, 'z')] = (zero.copy(), e, _sum([sg for ci, sg in zip(c, self.sz_signs) if ci]))
+        cleared = []
+        for x, z, sg in gens:
+            for j in drop:
+                if x[j] and (j, 'x') in singles:
+                    x, z, sg = _times(x, z, sg, *singles[(j, 'x')])
+                if z[j] and (j, 'z') in singles:
+                    x, z, sg = _times(x, z, sg, *singles[(j, 'z')])
+            cleared.append((x[columns], z[columns], sg))
+        m = len(columns)
+        xt = [(x, z, sg) for x, z, sg in cleared if x.any()]
+        zt = [(z, sg) for x, z, sg in cleared if not x.any() and z.any()]
+        sx, sxz2, sxs, extra_z = _independent_mixed(as_matrix([t[0] for t in xt], m), as_matrix([t[1] for t in xt], m),
+                                                    [t[2] for t in xt], m)
+        zt += extra_z
+        sz, szs = _min_weight_basis(*_independent(as_matrix([t[0] for t in zt], m), [t[1] for t in zt], m), m)
+        sx, sxz2, sxs = _min_weight_basis_mixed(sx, sxz2, sxs, m, sz, szs)
+        keep = set(columns)
+        pairs = [(x, z) for x, z in zip(self.logical_x, self.logical_z)
+                 if set(x.support) & keep or set(z.support) & keep]
+        nc = frozenset(columns.index(j) for j in self.nonclifford_columns if j in keep)
+        return StabilizerCode(
+            qubits=tuple(self.qubits[j] for j in columns),
+            hadamard=tuple(self.hadamard[j] for j in columns),
+            sx=sx, sx_signs=sxs, sz=sz, sz_signs=szs,
+            logical_x=[x.restricted(columns) for x, _ in pairs],
+            logical_z=[z.restricted(columns) for _, z in pairs],
+            non_clifford=bool(nc),
+            positions=tuple(self.positions[j] for j in columns) if self.positions else None,
+            nonclifford_columns=nc, sx_z=sxz2)
 
     def blocks(self) -> list['StabilizerCode']:
         """The data code split into independent blocks (connected components of the qubits)."""
@@ -267,7 +376,8 @@ class StabilizerCode:
         Its adjoint is the ideal decoder. Up to a non-zero scalar. CSS codes only.
         """
         if not self.is_css:
-            raise NotImplementedError("the ideal encoder is only built for CSS codes")
+            raise NotImplementedError("the ideal encoder is only built for CSS codes so far, so the logical "
+                                      "action in a code that is not CSS is not computed yet")
         stabs = self.stabilizers
         xs = [(p, p.sign) for p in stabs if any(p.x)]
         zs = [(p, p.sign) for p in stabs if any(p.z)]
@@ -334,14 +444,23 @@ class StabilizerCode:
 
 # -- reading a code off a diagram ---------------------------------------------------
 
-def code_of(g: BaseGraph, labels: Any = None, positions: Any = None) -> StabilizerCode:
+def code_of(g: BaseGraph, labels: Any = None, positions: Any = None,
+            common_to_all_runs: bool = False) -> StabilizerCode:
     """The stabilizer code that ``g`` encodes into (question 1 of the paper).
 
     ``g`` maps its inputs (logical qubits) to its outputs (physical qubits);
     ``labels[j]`` names output ``j`` (default: its index). Symbolic Boolean phases
-    (measurement outcomes) are allowed and become stabilizer signs. Raises
-    :class:`NotACodeError` if ``g`` is zero or not an isometry, and
-    ``NotImplementedError`` for non-Clifford phases in the X basis.
+    (measurement outcomes) are allowed and become stabilizer signs. The code
+    need not be CSS. Raises :class:`NotACodeError` if ``g`` is zero or not an
+    isometry, :class:`OutcomeDependentCodeError` if the stabilizers themselves
+    (not only their signs) depend on the outcomes, and ``NotImplementedError``
+    for phase gadgets that the reduction leaves in the X basis.
+
+    With ``common_to_all_runs`` the stabilizers that depend on the outcomes are
+    left out instead of raising, so the result holds the Pauli strings that
+    are stabilizers (up to sign) in every run; its logical operators and ``k``
+    are then those of that smaller group. Used to check that a block stays in
+    a code (:meth:`~zxqec.codes.LogicalAction.stays_in_code`).
     """
     res = reduce_gpf(g)
     if res.is_zero:
@@ -396,29 +515,37 @@ def code_of(g: BaseGraph, labels: Any = None, positions: Any = None) -> Stabiliz
     t = [h.phase(w) for w in sorted(out_col, key=lambda w: out_col[w])]
     hflags = tuple(int(has_boundary_hadamard(h, b)) for b in outs)
 
-    # which X-strings of the internal rows survive the phase gadgets (see .phasepoly)
-    mm = as_matrix(rows_m, n)
-    combos, extra = _surviving_combinations(h, zm, zlayer, gadget_hubs)
-    sx_rows = (combos @ mm) % 2 if m else np.zeros((0, n), np.uint8)
-    sx_signs = [_sum([s for c, s in zip(a, signs_m) if c] + [e]) for a, e in zip(combos, extra)] if m else []
-    sx, sx_signs = _min_weight_basis(*_independent(sx_rows, sx_signs, n), n)
-    touched: set[int] = set()
-    for hub in gadget_hubs:
-        for v in h.neighbors(hub):
-            for w, row in zl + zm:
-                if w == v:
-                    touched |= {int(j) for j in np.flatnonzero(row)}
-
     all_rows = as_matrix(rows_l + rows_m, n)
     zstab = nullspace(all_rows)
     sz_signs = [_sum([ti for ti, zi in zip(t, z) if zi]) for z in zstab]
     sz, sz_signs = _min_weight_basis(*_independent(zstab, sz_signs, n), n)
 
+    # which X-strings of the internal rows survive the phase gadgets (see .phasepoly), and the
+    # Z part a Clifford gadget gives them
+    mm = as_matrix(rows_m, n)
+    combos, extra, dvecs, nonclifford, touched = _gadget_layer(h, zl, zm, zlayer, gadget_hubs, labels,
+                                                               drop_run_dependent=common_to_all_runs)
+    sx_rows = (combos @ mm) % 2 if m else np.zeros((0, n), np.uint8)
+    sx_z, sx_signs = [], []
+    for a, v, e, w in zip(combos, sx_rows, extra, dvecs):
+        sx_z.append(w)
+        sx_signs.append(_x_type_sign(a, v, w, e, signs_m, t, h.var_registry))
+    if any(w.any() for w in sx_z):
+        sx, sxz, sx_signs, more_z = _independent_mixed(sx_rows, as_matrix(sx_z, n), sx_signs, n)
+        if more_z:
+            zt = [(row, sg) for row, sg in zip(sz, sz_signs)] + more_z
+            sz, sz_signs = _min_weight_basis(*_independent(as_matrix([r for r, _ in zt], n),
+                                                           [sg for _, sg in zt], n), n)
+        sx, sxz, sx_signs = _min_weight_basis_mixed(sx, sxz, sx_signs, n, sz, sz_signs)
+    else:
+        sx, sx_signs = _min_weight_basis(*_independent(sx_rows, sx_signs, n), n)
+        sxz = None
+
     code = StabilizerCode(qubits=labels, hadamard=hflags, sx=sx, sx_signs=sx_signs, sz=sz,
                           sz_signs=sz_signs, logical_x=[], logical_z=[],
-                          non_clifford=bool(gadget_hubs),
+                          non_clifford=nonclifford,
                           positions=tuple(positions) if positions is not None else None,
-                          nonclifford_columns=frozenset(touched))
+                          nonclifford_columns=frozenset(touched), sx_z=sxz)
     stab = code.symplectic()
     lx, lz = _canonical_logicals(stab, n)
     code.logical_x = [PauliString.from_arrays(*_lightest(v, stab, n)) for v in lx]
@@ -428,23 +555,53 @@ def code_of(g: BaseGraph, labels: Any = None, positions: Any = None) -> Stabiliz
 
 # -- helpers ------------------------------------------------------------------------------
 
-def _surviving_combinations(h: BaseGraph, zm: list, zlayer: list, hubs: list,
-                            cap: int = 12) -> tuple[np.ndarray, list[Any]]:
-    """The combinations ``a`` of internal Z-spiders whose X-string is still a stabilizer.
+def _gadget_layer(h: BaseGraph, zl: list, zm: list, zlayer: list, hubs: list, labels: Any,
+                  cap: int = 14, drop_run_dependent: bool = False
+                  ) -> tuple[np.ndarray, list[dict], list[np.ndarray], bool, set[int]]:
+    """How the phase gadgets of a reduced diagram affect its code.
 
-    Without gadgets that is every combination. With gadgets, ``a`` survives when
-    flipping its bits changes the gadgets' total phase by an amount that does
-    not depend on any bit (:func:`~zxqec.codes.phasepoly.delta`); that amount,
-    a function of the outcomes, is returned as an extra sign. Up to ``cap``
-    internal spiders are searched exhaustively; beyond that, any gadget that
-    sees a combination oddly breaks it (sound, but it can call a code
-    non-Clifford too eagerly).
+    Returns ``(combos, changes, zparts, non_clifford, columns)``:
+
+    * ``combos``: a basis of the combinations ``a`` of internal Z-spiders whose
+      X-string is part of a stabilizer; for each, the part of the phase change
+      that does not depend on the bits (a constant and outcome terms, as a
+      phase-polynomial dictionary), and the stabilizer's Z part ``w`` on the
+      outputs;
+    * ``non_clifford``: whether the gadgets add non-Clifford content, i.e.
+      flipping some Z-spider bits changes their total phase by something that is
+      not a Pauli (the "surviving stabilizers" proposition of the paper);
+    * ``columns``: the qubits reached by such non-Clifford gadgets.
+
+    Flipping the bits ``a`` changes the gadgets' total phase by
+    :func:`~zxqec.codes.phasepoly.delta`, which depends on ``a`` only through
+    which gadgets see ``a`` an odd number of times. So the combinations no gadget
+    sees oddly survive with no extra sign, and only one representative per
+    pattern of gadgets has to be tried: at most ``2^r`` for ``r`` independent
+    gadget parities. Each representative falls in one of three cases:
+
+    * the change does not depend on any bit: a stabilizer, with the change as sign;
+    * it depends on the bits only through a Pauli ``Z`` string (every term has
+      one bit and coefficient ``pi``), ``d . y`` say: if some ``w`` has
+      ``w . (y A) = d . y`` for all bits, the X-string is part of the stabilizer
+      ``Z^w X^{aM}``, which mixes ``X`` and ``Z`` (the code is not CSS). If no such
+      ``w`` exists, the change depends on bits the outputs cannot see, e.g. a
+      logical input, and the X-string is a (Clifford) logical operator. If a
+      term also contains an outcome, the mixing happens in some runs only and
+      :class:`OutcomeDependentCodeError` is raised;
+    * anything else: the X-string is broken by non-Clifford phases, and the
+      code holds non-Clifford logical content.
+
+    Raises ``NotImplementedError`` if there are more than ``cap`` independent
+    gadget parities to try.
     """
+    from .gf2 import complement_basis
     from .phasepoly import Gadget, affine_parts, delta, to_pyzx
-    m = len(zm)
-    if not hubs or m == 0:
-        return np.eye(m, dtype=np.uint8), [0] * m
-    name = {v: 'z{}'.format(i) for i, v in enumerate(zlayer)}
+    k, m = len(zl), len(zm)
+    n = len(labels)
+    if not hubs:
+        return np.eye(m, dtype=np.uint8), [{}] * m, [np.zeros(n, np.uint8)] * m, False, set()
+    layer_rows = as_matrix([row for _v, row in zl] + [row for _v, row in zm], n)
+    index = {v: i for i, v in enumerate(zlayer)}          # L rows first, then M rows
     gadgets = []
     for hub in hubs:
         leaves = [w for w in h.neighbors(hub) if is_leaf(h, w)]
@@ -452,30 +609,130 @@ def _surviving_combinations(h: BaseGraph, zm: list, zlayer: list, hubs: list,
         if hasattr(angle, 'free_vars'):
             raise NotImplementedError("code_of: a gadget with a symbolic angle")
         sign_vars, const = affine_parts(h.phase(hub))
-        bits = [name[w] for w in h.neighbors(hub) if w in name]
+        bits = [('z', index[w]) for w in h.neighbors(hub) if w in index]
         gadgets.append(Gadget(Fraction(angle), bits, sign_vars, const))
-    mnames = [name[v] for v, _ in zm]
-    if m > cap:
-        inc = [[1 if nm in g.bits else 0 for nm in mnames] for g in gadgets]
-        return nullspace(as_matrix(inc, m)), [0] * nullspace(as_matrix(inc, m)).shape[0]
-    passing, signs = [], []
-    for mask in range(1, 1 << m):
-        a = np.array([(mask >> i) & 1 for i in range(m)], dtype=np.uint8)
-        d = delta(gadgets, {nm for nm, ai in zip(mnames, a) if ai})
-        if any(any(v.startswith('z') and v[1:].isdigit() for v in mono) for mono in d):
-            continue
-        passing.append(a)
-        signs.append(to_pyzx(d, h.var_registry))
-    if not passing:
-        return np.zeros((0, m), np.uint8), []
-    # the passing combinations form a subspace, so the rows of its RREF are among them
-    r = rref(as_matrix(passing, m))[0]
-    out, out_signs = [], []
-    for row in r:
-        idx = next(i for i, a in enumerate(passing) if (a == row).all())
-        out.append(passing[idx])
-        out_signs.append(signs[idx])
-    return as_matrix(out, m), out_signs
+    incidence = as_matrix([[1 if ('z', i) in g.bits else 0 for i in range(k + m)] for g in gadgets], k + m)
+
+    def flipped(vec: np.ndarray, offset: int) -> set:
+        return {('z', offset + i) for i, b in enumerate(vec) if b}
+
+    def z_terms(d: dict) -> list:
+        return [mono for mono in d if any(isinstance(v, tuple) for v in mono)]
+
+    def pauli_only(terms: list, d: dict) -> bool:
+        return all(sum(isinstance(v, tuple) for v in mono) == 1 and d[mono] == 1 for mono in terms)
+
+    def representatives(g_part: np.ndarray, dim: int) -> tuple[np.ndarray, list[np.ndarray]]:
+        kernel = nullspace(g_part) if g_part.size else np.eye(dim, dtype=np.uint8)
+        comp = complement_basis(kernel, np.eye(dim, dtype=np.uint8))
+        if comp.shape[0] > cap:
+            raise NotImplementedError(
+                "code_of: {} independent gadget parities; deciding which stabilizers survive "
+                "them is limited to {}".format(comp.shape[0], cap))
+        reps = []
+        for mask in range(1, 1 << comp.shape[0]):
+            v = np.zeros(dim, dtype=np.uint8)
+            for i in range(comp.shape[0]):
+                if mask >> i & 1:
+                    v ^= comp[i]
+            reps.append(v)
+        return kernel, reps
+
+    # which X-strings of the internal rows survive
+    nonclifford = False
+    if m:
+        kernel, reps = representatives(incidence[:, k:], m)
+        passing, changes, zparts = [], [], []
+        for a in reps:
+            d = delta(gadgets, flipped(a, k))
+            terms = z_terms(d)
+            if terms and not pauli_only(terms, d):
+                nonclifford = True
+                continue
+            run_dependent = (any(not isinstance(v, tuple) for mono in terms for v in mono)
+                             or any(c % 1 for mono, c in d.items() if mono and mono not in terms))
+            if run_dependent and drop_run_dependent:
+                continue                           # a stabilizer in some runs only: not common to all
+            if run_dependent:
+                support = sorted({int(j) for i, b in enumerate(a) if b for j in np.flatnonzero(zm[i][1])})
+                raise OutcomeDependentCodeError(
+                    "a Clifford phase controlled by measurement outcomes gives the X stabilizer on qubits "
+                    "{} a Z part (or a factor i) in some runs only, so the code differs between runs; "
+                    "reading it run by run is not implemented".format(", ".join(str(labels[j]) for j in support)))
+            dv = np.zeros(k + m, dtype=np.uint8)
+            for mono in terms:
+                (bit,) = mono
+                dv[bit[1]] ^= 1
+            w = solve(layer_rows.copy(), dv) if dv.any() else np.zeros(n, np.uint8)
+            if w is None:
+                continue                           # the change reaches bits the outputs cannot see
+            passing.append(a)
+            changes.append({mono: c for mono, c in d.items() if mono not in terms})
+            zparts.append(w.astype(np.uint8))
+        combos = [row for row in kernel]
+        extra: list[dict] = [{} for _ in combos]
+        dvecs: list[np.ndarray] = [np.zeros(n, np.uint8) for _ in combos]
+        if passing:
+            basis = rref(as_matrix(passing, m))[0]     # the passing set is a subspace
+            for row in basis:
+                idx = next(i for i, a in enumerate(passing) if (a == row).all())
+                combos.append(passing[idx])
+                extra.append(changes[idx])
+                dvecs.append(zparts[idx])
+        combo_matrix = as_matrix(combos, m)
+    else:
+        combo_matrix = np.zeros((0, 0), np.uint8)
+        extra, dvecs = [], []
+
+    # non-Clifford logical content: some flip, of any rows, changes the phase by a non-Pauli
+    if not nonclifford:
+        try:
+            _kernel, reps = representatives(incidence, k + m)
+            for b in reps:
+                d = delta(gadgets, flipped(b, 0))
+                terms = z_terms(d)
+                if terms and not pauli_only(terms, d):
+                    nonclifford = True
+                    break
+        except NotImplementedError:
+            nonclifford = any(g.angle % Fraction(1, 2) != 0 for g in gadgets)
+
+    columns: set[int] = set()
+    if nonclifford:
+        rows = [row for _v, row in zl] + [row for _v, row in zm]
+        for g in gadgets:
+            if g.angle % Fraction(1, 2) != 0:
+                for _z, i in g.bits:
+                    columns |= {int(j) for j in np.flatnonzero(rows[i])}
+    return combo_matrix, extra, dvecs, nonclifford, columns
+
+
+def _x_type_sign(a: np.ndarray, v: np.ndarray, w: np.ndarray, change: dict, signs_m: list[Any],
+                 t: list[Any], registry: Any) -> Any:
+    """The sign of the stabilizer ``(-1)^sign L(v, w)`` read for the combination ``a``.
+
+    Flipping the bits ``a`` multiplies the image by ``exp(i pi (s.a + c + d.y))``,
+    where ``s`` are the Z-spider phases, ``c`` the bit-free part of the gadgets'
+    change and ``d.y = w . (output bits)``. On outputs ``u = yA + t`` that is
+    ``X^v E = exp(i pi (s.a + c + w.t)) Z^w E``, so ``Z^w X^v`` fixes ``E`` up to that
+    phase, and ``L(v, w) = i^(-w.v) Z^w X^v`` gives the sign
+    ``w.v/2 - c + s.a + w.t`` (mod 2). The first two terms together are an integer.
+    """
+    const = change.get(frozenset(), Fraction(0))
+    whole = Fraction(int((v & w).sum()), 2) - const
+    if whole.denominator != 1:
+        raise RuntimeError("code_of: a stabilizer with a phase that is not +-1; this is a bug")
+    parts: list[Any] = [int(whole) % 2]
+    parts += [sg for c, sg in zip(a, signs_m) if c]
+    parts += [tj for tj, wj in zip(t, w) if wj]
+    rest = {mono: c for mono, c in change.items() if mono}
+    if rest:
+        if any(c % 1 for c in rest.values()):
+            raise OutcomeDependentCodeError("a stabilizer's phase depends on the outcomes by a factor of i; "
+                                            "the code differs between runs")
+        from .phasepoly import to_pyzx
+        parts.append(to_pyzx(rest, registry))
+    return _sum(parts)
 
 
 def _independent(rows: np.ndarray, signs: list[Any], n: int) -> tuple[np.ndarray, list[Any]]:
@@ -549,6 +806,159 @@ def _lightest(v: np.ndarray, stab: np.ndarray, n: int, cap: int = 16) -> tuple[n
             best = (key[0], key[1], w)
     zero = np.zeros(n, dtype=np.uint8)
     return (best[2], zero) if kind == 'X' else (zero, best[2])
+
+
+# -- Pauli products, for generators that mix X and Z ------------------------------------------
+
+def _times(x1: np.ndarray, z1: np.ndarray, s1: Any,
+           x2: np.ndarray, z2: np.ndarray, s2: Any) -> tuple[np.ndarray, np.ndarray, Any]:
+    """The product of two commuting Hermitian Pauli strings ``(-1)^s L(x, z)``.
+
+    ``L(x, z)`` has letter ``X``, ``Y``, ``Z`` where ``(x_j, z_j)`` is ``(1,0)``,
+    ``(1,1)``, ``(0,1)``; since ``Y = -i Z X``, ``L(x, z) = i^(-x.z) Z^z X^x``, and
+    ``L1 L2 = i^e L3`` with ``e = x3.z3 - x1.z1 - x2.z2 + 2 x1.z2``, which is even
+    for commuting strings.
+    """
+    x3, z3 = x1 ^ x2, z1 ^ z2
+    e = (int((x3 & z3).sum()) - int((x1 & z1).sum()) - int((x2 & z2).sum())
+         + 2 * int((x1 & z2).sum())) % 4
+    if e % 2:
+        raise ValueError("the Pauli strings anticommute")
+    return x3, z3, _sum([s1, s2, e // 2])
+
+
+def _combine(xs: np.ndarray, zs: np.ndarray, signs: list[Any], coeffs: Any,
+             n: int) -> tuple[np.ndarray, np.ndarray, Any]:
+    """The ordered product of the generators ``(xs[i], zs[i], signs[i])`` with ``coeffs[i] = 1``."""
+    x, z, sg = np.zeros(n, np.uint8), np.zeros(n, np.uint8), 0
+    for c, xr, zr, si in zip(coeffs, xs, zs, signs):
+        if c:
+            x, z, sg = _times(x, z, sg, xr.astype(np.uint8), zr.astype(np.uint8), si)
+    return x, z, sg
+
+
+def _reduce_z_part(x: np.ndarray, z: np.ndarray, sign: Any, sz: np.ndarray, sz_signs: list[Any], n: int,
+                   target: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, Any] | None:
+    """Multiply ``(x, z, sign)`` by Z-type stabilizers.
+
+    With ``target``: make the Z part ``0`` or equal to ``target``, returning ``None``
+    if neither is possible. Without: make it as light as possible (fewest qubits
+    touched, then fewest ``Z`` s, then first support), enumerating up to ``2^12``
+    combinations and otherwise only reducing it modulo their span.
+    """
+    zero = np.zeros(n, dtype=np.uint8)
+    if target is not None:
+        for goal in (zero, target):
+            c = _combination(sz, z ^ goal) if (z ^ goal).any() else np.zeros(len(sz), np.uint8)
+            if c is not None:
+                u = (c @ sz) % 2 if len(sz) else zero
+                return _times(x, z, sign, zero, u.astype(np.uint8), _sum([t for ci, t in zip(c, sz_signs) if ci]))
+        return None
+    if not z.any() or not len(sz):
+        return x, z, sign
+    if len(sz) > 12:
+        r, piv, tr = rref(sz, track=True)
+        zr = reduce_mod(z, r, piv)
+        c = _combination(sz, z ^ zr)
+        if c is None:
+            return x, z, sign
+        return _times(x, z, sign, zero, (z ^ zr).astype(np.uint8), _sum([t for ci, t in zip(c, sz_signs) if ci]))
+    best: tuple[Any, list[int], np.ndarray] | None = None
+    for bits in range(1 << len(sz)):
+        pick = [(bits >> i) & 1 for i in range(len(sz))]
+        u = np.zeros(n, dtype=np.uint8)
+        for ci, row in zip(pick, sz):
+            if ci:
+                u ^= row
+        z2 = z ^ u
+        key = (int((x | z2).sum()), int(z2.sum()), tuple(int(j) for j in np.flatnonzero(x | z2)))
+        if best is None or key < best[0]:
+            best = (key, pick, u)
+    assert best is not None
+    _key, pick, u = best
+    return _times(x, z, sign, zero, u, _sum([t for ci, t in zip(pick, sz_signs) if ci]))
+
+
+def _frame_single(j: int, sx: np.ndarray, sxz: np.ndarray, sx_signs: list[Any], sz: np.ndarray,
+                  sz_signs: list[Any], n: int) -> tuple[str, Any] | None:
+    """The single-qubit stabilizer on qubit ``j`` in the frame (letter and sign), if there is one."""
+    e = np.zeros(n, dtype=np.uint8)
+    e[j] = 1
+    c = _combination(sx, e)
+    if c is not None:
+        x, z, sg = _combine(sx, sxz, sx_signs, c, n)
+        single = _reduce_z_part(x, z, sg, sz, sz_signs, n, target=e)
+        if single is not None:
+            return ('Y' if single[1].any() else 'X'), single[2]
+    c = _combination(sz, e)
+    if c is not None:
+        return 'Z', _sum([sg for ci, sg in zip(c, sz_signs) if ci])
+    return None
+
+
+def _independent_mixed(xs: np.ndarray, zs: np.ndarray, signs: list[Any],
+                       n: int) -> tuple[np.ndarray, np.ndarray, list[Any], list[tuple[np.ndarray, Any]]]:
+    """Generators with independent X parts, as products of the given ones.
+
+    A product whose X part cancels is a Z-type stabilizer; those are returned
+    separately (Z part and sign) instead of being lost.
+    """
+    if xs.size == 0:
+        return np.zeros((0, n), np.uint8), np.zeros((0, n), np.uint8), [], []
+    r, _, tr = rref(xs, track=True)
+    out_x, out_z, out_s = [], [], []
+    for tv in tr:
+        x, z, sg = _combine(xs, zs, signs, tv, n)
+        out_x.append(x)
+        out_z.append(z)
+        out_s.append(sg)
+    # the combinations that cancel the X part: the null space of the X parts
+    extra = []
+    for c in nullspace(xs.T.copy()) if xs.shape[0] > r.shape[0] else []:
+        x, z, sg = _combine(xs, zs, signs, c, n)
+        if z.any():
+            extra.append((z, sg))
+    return as_matrix(out_x, n), as_matrix(out_z, n), out_s, extra
+
+
+def _min_weight_basis_mixed(xs: np.ndarray, zs: np.ndarray, signs: list[Any], n: int, sz: np.ndarray,
+                            sz_signs: list[Any], cap: int = 16) -> tuple[np.ndarray, np.ndarray, list[Any]]:
+    """:func:`_min_weight_basis` for X-type generators with Z parts.
+
+    Each element of the span is taken with its lightest Z part (modulo the
+    Z-type stabilizers ``sz``); weight counts the qubits an element touches.
+    Ties go to fewer outcomes in the sign, then fewer ``Y`` letters (so the
+    ``[[5,1,3]]`` code shows ``XZZXI`` and its cyclic shifts), then support.
+    Elements are picked greedily while their X parts stay independent.
+    """
+    r = xs.shape[0]
+    if r == 0:
+        return xs, zs, signs
+    if r > cap:
+        out = [_reduce_z_part(x, z, sg, sz, sz_signs, n) for x, z, sg in zip(xs, zs, signs)]
+        return (as_matrix([o[0] for o in out if o], n), as_matrix([o[1] for o in out if o], n),
+                [o[2] for o in out if o])
+    elements = []
+    for bits in range(1, 1 << r):
+        c = [(bits >> i) & 1 for i in range(r)]
+        prod = _reduce_z_part(*_combine(xs, zs, signs, c, n), sz, sz_signs, n)
+        assert prod is not None
+        x, z, sg = prod
+        nvars = len(sg.free_vars()) if hasattr(sg, 'free_vars') else 0
+        elements.append((int((x | z).sum()), nvars, int((x & z).sum()),
+                         tuple(int(j) for j in np.flatnonzero(x | z)), int(z.sum()), x, z, sg))
+    elements.sort(key=lambda e: e[:5])
+    px: list[np.ndarray] = []
+    pz: list[np.ndarray] = []
+    ps: list[Any] = []
+    for _w, _nv, _ny, _sup, _nz, x, z, sg in elements:
+        if rref(as_matrix(px + [x], n))[0].shape[0] > len(px):
+            px.append(x)
+            pz.append(z)
+            ps.append(sg)
+            if len(px) == r:
+                break
+    return as_matrix(px, n), as_matrix(pz, n), ps
 
 
 def _nonzero_on(gens: np.ndarray, signs: list[Any], cols: list[int]) -> tuple[np.ndarray, list[Any]]:
@@ -634,10 +1044,10 @@ def _canonical_logicals(stab: np.ndarray, n: int) -> tuple[list[np.ndarray], lis
     xs, zs = [], []
     while basis:
         v = basis.pop(0)
-        partner = next((w for w in basis if _omega(v, w, n)), None)
-        if partner is None:
+        at = next((i for i, w in enumerate(basis) if _omega(v, w, n)), None)
+        if at is None:
             continue
-        basis.remove(partner)
+        partner = basis.pop(at)
         basis = [(u + _omega(u, partner, n) * v + _omega(u, v, n) * partner) % 2 for u in basis]
         xs.append(v)
         zs.append(partner)
@@ -678,7 +1088,9 @@ def _state_label(pauli: str, sign: Any) -> str:
     if const is None and hasattr(sign, 'free_vars') and not sign.free_vars():
         const = int(sum(c for c, _ in sign.terms)) % 2 if sign.terms else 0
     if const is not None:
-        return ('0', '1')[const % 2] if pauli == 'Z' else ('+', '-')[const % 2]
+        return {'Z': ('0', '1'), 'X': ('+', '-'), 'Y': ('+i', '-i')}[pauli][const % 2]
+    if pauli == 'Y':
+        return '(-1)^({}) i'.format(sign)
     return '{}' .format(sign) if pauli == 'Z' else '(-1)^({})'.format(sign)
 
 

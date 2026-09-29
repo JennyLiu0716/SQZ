@@ -228,7 +228,8 @@ def test_non_pauli_phase_on_a_boundary_spider():
         g.set_inputs((i,)); g.set_outputs((o,))
         h = to_gpf(g)
         assert is_gpf(h), f"{ty} with phase {phase}: {[(w, h.type(w), str(h.phase(w))) for w in h.vertices()]}"
-        assert zx.compare_tensors(g, h, preserve_scalar=False)
+        # an X-phase is recoloured to a Z-phase between two boundary Hadamards (see hadamard.py)
+        assert zx.compare_tensors(g, restore_boundary_hadamards(h), preserve_scalar=False)
 
     # the same with the spider only on one side (a state)
     g = Graph()

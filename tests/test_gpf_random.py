@@ -14,7 +14,7 @@ from pyzx.graph import Graph
 from pyzx.symbolic import new_var
 from pyzx.utils import EdgeType, VertexType
 
-from zxqec.gpf import boolean_variables, is_gpf, reduce_gpf, same_map, to_gpf
+from zxqec.gpf import boolean_variables, is_gpf, reduce_gpf, restore_boundary_hadamards, same_map, to_gpf
 
 
 def random_diagram(rng, phases):
@@ -70,6 +70,7 @@ def test_to_gpf_on_random_diagrams():
                 continue
             h = to_gpf(g)
             assert is_gpf(h), (phases, [(v, h.type(v), str(h.phase(v))) for v in h.vertices()])
+            h = restore_boundary_hadamards(h)             # recolouring X-phases leaves boundary Hadamards
             for a in assignments(names):
                 assert same_map(g.substitute_variables(a) if names else g,
                                 h.substitute_variables(a) if names else h), (phases, a)

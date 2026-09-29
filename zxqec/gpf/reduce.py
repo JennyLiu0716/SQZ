@@ -35,6 +35,7 @@ from pyzx.graph.base import BaseGraph, VT, ET
 from pyzx.symbolic import Poly
 from pyzx.utils import VertexType, is_pauli
 
+from .gadgets import simplify_gadgets
 from .hadamard import restore_boundary_hadamards
 from .matrix import apply_matrix, is_zero_phase, phase_mod2, reduce_rows, split_matrix
 from .normal_form import is_leaf, layout_gpf, to_gpf
@@ -62,7 +63,7 @@ class GPFResult:
 
 
 def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
-               max_rounds: int = 20) -> GPFResult:
+               max_rounds: int = 20, gadgets: bool = True) -> GPFResult:
     """Reduce ``g`` to GPF with phases and no further row reduction; see the module docstring.
 
     The result is reduced in the sense that no free row is empty and the free
@@ -72,6 +73,16 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     ``isolate_paulis=True`` isolates every non-zero phase into a gadget (the
     thesis's behaviour); by default Pauli phases stay on the spiders and are
     carried through the row reduction.
+
+    With ``gadgets`` (the default, and only without ``isolate_paulis``), once the
+    row reduction settles the layer of Z-gadgets is simplified as a whole
+    (:func:`~zxqec.gpf.gadgets.simplify_gadgets`): gadgets that cancel are
+    removed and Pauli terms move onto the spiders, after which the row
+    reduction runs again. If Z-rows read by gadgets are still linearly
+    dependent, the dependency is removed by a change of variables that the
+    gadgets follow (:func:`_expose_free_bits`), and parity checks left on such
+    rows are solved for one of their bits (:func:`_resolve_checks`); then the
+    loop continues.
     """
     h = to_gpf(g, isolate_paulis=isolate_paulis)
     constraints = _scalar_constraints(h)
@@ -86,6 +97,15 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
                 changed = True
             constraints += apply_matrix(h, m)
         constraints += _remove_isolated_pairs(h)
+        if not changed and gadgets and not isolate_paulis and simplify_gadgets(h):
+            changed = True
+        if not changed and gadgets and not isolate_paulis:
+            exposed = _expose_free_bits(h)
+            if exposed is None:
+                exposed = _resolve_checks(h)
+            if exposed is not None:
+                constraints += exposed
+                changed = True
         if not changed:
             converged = True
             break
@@ -96,6 +116,98 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     constraints = [phase_mod2(c) for c in constraints]
     constraints = [c for c in constraints if not is_zero_phase(c)]
     return GPFResult(h, constraints, unsatisfiable(constraints))
+
+
+def _expose_free_bits(g: BaseGraph[VT, ET]) -> list[Any] | None:
+    """Make Z-rows that depend on others, through rows read by gadgets, into bits only gadgets hold.
+
+    The row reduction uses only rows without external columns as sources. A row
+    whose only external columns are hubs of Z-gadgets (X-spiders with a Z-leaf)
+    is still a free summation variable: adding row ``i`` to row ``j`` is the
+    substitution ``y_i = y_i' xor y_j``, under which ``j``'s X-neighbours and phase
+    change as usual and every gadget that read ``y_i`` now also reads ``y_j``,
+    i.e. the hub columns are added along with the rest of the row. Such rows
+    are used here only to clear the X-part of rows that depend on them, which
+    leaves those rows to :func:`~zxqec.gpf.gadgets.simplify_gadgets` (they are
+    summed out when their phases are Clifford). Rows attached to an input or to
+    an X-leaf never take part. Returns ``None`` if nothing changed, otherwise the
+    constraints of rows that lost every edge (see :func:`~zxqec.gpf.matrix.apply_matrix`).
+    """
+    m = split_matrix(g, VertexType.Z)
+    if not m.rows:
+        return None
+    ins = set(g.inputs())
+    n_ext = m.num_external
+    fixed_cols = [c for c, t in enumerate(m.external) if t in ins or is_leaf(g, t)]
+    usable = [i for i, r in enumerate(m.rows)
+              if is_pauli(g.phase(r)) and not any(m.entries[i][c] for c in fixed_cols)]
+    basis: list[tuple[list[int], set[int], int]] = []       # (vector, original rows, pivot)
+    changed = False
+    for j in usable:
+        v = m.entries[j][n_ext:]
+        if not any(v):
+            continue                         # already held by gadgets alone
+        combo = {j}
+        v = v[:]
+        for bv, bc, piv in basis:
+            if v[piv]:
+                v = [a ^ b for a, b in zip(v, bv)]
+                combo ^= bc
+        if any(v):
+            basis.append((v, combo, v.index(1)))
+            continue
+        for i in combo - {j}:                # j depends on independent rows: add them to j
+            m.entries[j] = [a ^ b for a, b in zip(m.entries[j], m.entries[i])]
+            m.phases[j] = phase_mod2(m.phases[j] + m.phases[i])
+        changed = True
+    return apply_matrix(g, m) if changed else None
+
+
+def _resolve_checks(g: BaseGraph[VT, ET]) -> list[Any] | None:
+    """Solve a parity check that the row reduction cannot reach for one of its bits.
+
+    An X-spider ``x`` with no output and Pauli phase ``k`` imposes
+    ``xor of its Z-neighbours' bits = k``. The row reduction removes it by using a
+    free neighbour as a source; when every neighbour is read by gadgets it
+    stalls. Take a neighbour ``v`` that is still a free summation variable (no
+    input, no X-leaf, Pauli phase), add its row to the other neighbours (the
+    substitution of :func:`_expose_free_bits`), after which ``x`` touches ``v``
+    alone and fixes its bit to ``k``: ``v``'s remaining neighbours (X-spiders and
+    gadget hubs) receive the state ``|k>``, i.e. the phase ``k``, and ``x`` and ``v``
+    go. A check all of whose bits come from inputs projects the input and is
+    left alone (the diagram is not an isometry). Returns ``None`` if nothing
+    changed, else the constraints of rows that lost every edge.
+    """
+    ins, outs = set(g.inputs()), set(g.outputs())
+
+    def usable(v: VT) -> bool:
+        return (g.type(v) == VertexType.Z and not is_leaf(g, v) and is_pauli(g.phase(v))
+                and not any(w in ins or is_leaf(g, w) for w in g.neighbors(v)))
+    for x in sorted(g.vertices()):
+        if (g.type(x) != VertexType.X or is_leaf(g, x) or not is_pauli(g.phase(x))
+                or any(w in outs or is_leaf(g, w) or g.type(w) != VertexType.Z for w in g.neighbors(x))):
+            continue
+        around = sorted(g.neighbors(x))
+        v = next((w for w in around if usable(w)), None)
+        if v is None:
+            continue
+        m = split_matrix(g, VertexType.Z)
+        iv = m.rows.index(v)
+        for u in around:
+            if u != v:
+                iu = m.rows.index(u)
+                m.entries[iu] = [a ^ b for a, b in zip(m.entries[iu], m.entries[iv])]
+                m.phases[iu] = phase_mod2(m.phases[iu] + m.phases[iv])
+        constraints = apply_matrix(g, m)
+        k = g.phase(x)
+        g.remove_vertex(x)
+        if v in g.vertices():
+            for w in list(g.neighbors(v)):
+                if k != 0:
+                    g.set_phase(w, phase_mod2(g.phase(w) + k))
+            g.remove_vertex(v)
+        return constraints
+    return None
 
 
 def constraint_system(constraints: Iterable[Any]) -> tuple[list[str], list[list[int]]]:

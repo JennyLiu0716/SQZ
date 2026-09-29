@@ -27,6 +27,16 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   four one-line changes to the program and what the tool says about each, including a check wired to
   the wrong qubit that keeps every run correct but leaves a distance-1 code. Figures come from
   [teaching_figures.py](teaching_figures.py).
+- [Cultivation.ipynb](Cultivation.ipynb) — d = 3 magic-state cultivation, from the circuit of Wan,
+  Zhong and Zapirain in Stim's format (`circuits/cultivation/`, Apache-2.0, with attribution). The tool
+  finds the colour code after the injection, derives all 26 detectors the authors wrote by hand (two of
+  them only once the layer of T gates is simplified as a whole), reads the double-check as a logical
+  measurement in the basis {T†|+⟩, T†|−⟩}, and shows that every noiseless run prepares T†|+⟩ up to a
+  Pauli correction. Part 4 draws the reduction step by step, as the thesis did (the circuit, the
+  normal form with 15 T-type gadgets, the same gadgets in the code's variables as in block
+  form, one T† gadget, and T†|+⟩ fed into the encoder of the colour code), and checks every picture against the circuit by tensor contraction in all 32 runs the
+  detectors allow; the pictures come from [zx_steps.py](zx_steps.py). Every claim is then checked
+  with an independent state-vector simulation.
 - [SteaneTInjection.ipynb](SteaneTInjection.ipynb) — a `T` gate injected into the [[7,1,3]] Steane
   code, from the physical circuit to the logical gate. **Written for a reader with no quantum error
   correction background**: it draws the code and its stabilizers, the injection gadget and the
@@ -52,4 +62,4 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   `--block LEVEL I` for one stage or block only, `--phases` to label the spiders with
   their phases, `--save FILE` to write the figure instead of opening a window.
 
-Planned: magic state distillation and cultivation.
+Planned: magic state distillation; cultivation at larger distances.

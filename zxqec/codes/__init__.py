@@ -20,9 +20,9 @@
 * :class:`PauliString` -- a Pauli operator with a possibly symbolic sign.
 """
 
-from .code import NotACodeError, StabilizerCode, code_of
+from .code import NotACodeError, OutcomeDependentCodeError, StabilizerCode, code_of
 from .logical import Branch, LogicalAction, glue, logical_action
 from .pauli import PauliString, phase_sum
 
-__all__ = ['StabilizerCode', 'NotACodeError', 'code_of', 'PauliString', 'phase_sum',
+__all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of', 'PauliString', 'phase_sum',
            'logical_action', 'LogicalAction', 'Branch', 'glue']
