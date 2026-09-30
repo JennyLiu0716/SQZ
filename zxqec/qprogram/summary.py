@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ['BlockSummary', 'ProgramSummary', 'summarize']
+__all__ = ['BlockSummary', 'ProgramSummary', 'summarize', 'transversality_violations']
 
 
 @dataclass
@@ -48,6 +48,7 @@ class BlockSummary:
     action: Any
     measurements: Any                          #: MeasurementReport restricted to the block, or None
     checks: list[tuple[bool, str]] = field(default_factory=list)
+    circuit: Any = None                        #: the block's gates, on the program's qubits
 
     @property
     def ok(self) -> bool:
@@ -58,7 +59,7 @@ class BlockSummary:
             return "?"
         if self.action.stays_in_code() is False:
             return "leaves the code"
-        ops = sorted({str(b.operation) for b in self.action.branches()})
+        ops = sorted({"not recognised" if b.operation is None else str(b.operation) for b in self.action.branches()})
         return " / ".join(ops) if ops else "zero"
 
     def describe(self) -> str:
@@ -128,7 +129,8 @@ def summarize(program: Any, level: int) -> ProgramSummary:
                     "before" if code_in is None else "after", e)
             else:
                 problem = "the logical action could not be computed: {}".format(e)
-        s = BlockSummary(i, label, block.role, block.stages, code_in, code_out, action, meas)
+        s = BlockSummary(i, label, block.role, block.stages, code_in, code_out, action, meas,
+                         circuit=program.block_circuit(level, i))
         s.checks = [(False, problem)] if problem else _checks(s)
         out.append(s)
     return ProgramSummary(level, out)
@@ -168,9 +170,15 @@ def _checks(b: BlockSummary) -> list[tuple[bool, str]]:
                            "measure an operator that is not a stabilizer of the code".format(", ".join(idle))))
         else:
             checks.append((False, "measures nothing"))
-    elif role == 'logical gate':
+    elif role in ('logical gate', 'transversal gate'):
+        names = sorted("an operation outside the named list" if o is None else str(o) for o in ops)
         checks.append((act.is_deterministic() and len(ops) == 1,
-                       "implements {} in every run".format(" / ".join(sorted(map(str, ops))))))
+                       "implements {} in every run".format(" / ".join(names))))
+        if role == 'transversal gate' and b.circuit is not None:
+            bad = transversality_violations(b.circuit, b.code_in)
+            checks.append((not bad, "transversal: no two qubits of one code block are connected by its gates"
+                           if not bad else "not transversal: its gates connect qubits {} of the code block on "
+                           "qubits {}".format(", ".join(map(str, bad[0][0])), _qubits(bad[0][1]))))
     elif role == 'correction':
         runs = ["{} {}".format(br.operation, br.when()) for br in act.branches()]
         checks.append((None not in ops, "applies " + "; ".join(runs)))
@@ -199,6 +207,57 @@ def _checks(b: BlockSummary) -> list[tuple[bool, str]]:
                            "outcome(s) {} are not predicted by earlier outcomes: the check cannot tell a "
                            "right state from a wrong one".format(", ".join(unchecked))))
     return checks
+
+
+def transversality_violations(circuit: Any, code: Any) -> list[tuple[list[int], list[int]]]:
+    """Where the gates of ``circuit`` are not transversal for ``code``.
+
+    Two qubits are connected when a multi-qubit gate acts on both, or through a
+    chain of such gates (a fault on one can spread to the other). The circuit is
+    transversal when every connected group holds at most one qubit of each code
+    block of ``code``. Returns ``(qubits, block)`` for each group and block where
+    it holds two or more: the qubits of the block in the group, and the block's
+    qubits. Qubits are the program's labels, as in ``code.qubits``.
+    """
+    parent: dict[int, int] = {}
+
+    def find(q: int) -> int:
+        while parent.setdefault(q, q) != q:
+            parent[q] = parent[parent[q]]
+            q = parent[q]
+        return q
+    for gate in circuit.gates:
+        qs = _gate_qubits(gate)
+        for q in qs[1:]:
+            parent[find(q)] = find(qs[0])
+    groups: dict[int, set[int]] = {}
+    for q in list(parent):
+        groups.setdefault(find(q), set()).add(q)
+    out = []
+    for blk in code.blocks() if code is not None else []:
+        members = set(int(q) for q in blk.qubits)
+        for grp in groups.values():
+            shared = sorted(grp & members)
+            if len(shared) > 1:
+                out.append((shared, sorted(members)))
+    return out
+
+
+def _gate_qubits(gate: Any) -> list[int]:
+    """The qubits a gate acts on (PyZX gates name them control/target, ctrl1/ctrl2, or targets)."""
+    qs: list[int] = []
+    for name in ('control', 'ctrl1', 'ctrl2', 'target'):
+        q = getattr(gate, name, None)
+        if isinstance(q, int) and q not in qs:
+            qs.append(q)
+    for q in getattr(gate, 'targets', None) or []:
+        if isinstance(q, int) and q not in qs:
+            qs.append(q)
+    return qs
+
+
+def _qubits(qs: list[int]) -> str:
+    return ",".join(map(str, qs))
 
 
 def _variables(text: str) -> list[str]:

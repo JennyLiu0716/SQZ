@@ -38,6 +38,17 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   form, one T† gadget, and T†|+⟩ fed into the encoder of the colour code), and checks every picture against the circuit by tensor contraction in all 32 runs the
   detectors allow; the pictures come from [zx_steps.py](zx_steps.py). Every claim is then checked
   with an independent state-vector simulation.
+- [StabilizerCodes.ipynb](StabilizerCodes.ipynb) — the three questions for codes that are not CSS. The
+  [[5,1,3]] code read off a ring of `CZ` gates (its stabilizers mix `X` and `Z`); its ideal encoder, built
+  from the Choi state following Yeh et al., checked with numpy against its definition; a program that
+  encodes, measures the checks and applies `H` then `S` on every qubit, which the tool finds to be the
+  logical `SH`, transversal and keeping the code; `H` on every qubit, which leaves it; the Steane code
+  after one `S` and its logical `H`; and what is not covered (a code that differs between runs).
+- [TransversalGates.ipynb](TransversalGates.ipynb) — the role `transversal gate`: a logical gate whose
+  gates never connect two qubits of one code block, directly or through a chain. The transversal `CNOT`
+  of two Steane blocks passes; the same `CNOT` with a chain that undoes itself, and a `SWAP` inside the
+  [[4,2,2]] code (a logical `CNOT`), do not; `H` on every qubit of the [[4,2,2]] code is transversal but
+  its logical action, `SWAP (H x H)` (checked with numpy), is not one of the named gates.
 - [ComparingPrograms.ipynb](ComparingPrograms.ipynb) — are two programs the same *logically*? A
   demo of `compare_programs`, for comparing a circuit as written with a compiled one: block by block,
   the same codes, the same logical operations up to a Pauli frame, and the same detectors. Four

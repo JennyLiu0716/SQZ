@@ -35,7 +35,8 @@ __all__ = ['Block', 'LevelManager', 'ROLES']
 
 #: the stage types of fault-tolerant protocols that :meth:`QProgram.summary` knows how to check
 ROLES = ('encoder', 'decoder', 'state preparation', 'syndrome extraction', 'logical gate',
-         'logical measurement', 'injection', 'correction', 'distillation', 'cultivation')
+         'transversal gate', 'logical measurement', 'injection', 'correction', 'distillation',
+         'cultivation')
 
 
 @dataclass(frozen=True)

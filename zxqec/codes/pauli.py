@@ -109,6 +109,21 @@ def phase_sum(items: Any) -> Any:
             total = s + total if isinstance(total, int) else total + s
     if hasattr(total, 'free_vars') and not total.free_vars():
         return _constant(total)
-    if not isinstance(total, int) and hasattr(total, 'terms') and not total.terms:
+    if isinstance(total, int):
+        return total % 2
+    if hasattr(total, 'terms') and not total.terms:
         return 0
-    return total
+    return _mod2(total)
+
+
+def _mod2(p: Any) -> Any:
+    """``p`` with its (integer) coefficients reduced mod 2, so a sign prints as ``c[3]``, not ``c[3] + 8``."""
+    try:
+        terms = [(int(c), t) for c, t in p.terms]
+    except (TypeError, ValueError):
+        return p
+    if any(c != cc for (c, _), (cc, _) in zip(terms, p.terms)):
+        return p                                     # not integral: leave it alone
+    from pyzx.symbolic import Poly
+    kept = [(c % 2, t) for c, t in terms if c % 2]
+    return Poly(kept) if kept else 0

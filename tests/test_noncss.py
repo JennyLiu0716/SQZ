@@ -469,3 +469,13 @@ def test_logical_gates_in_the_steane_code_after_an_s_gate():
     assert not h.code_in.is_css and h.code_in.same_code_as(h.code_out) and h.operations() == {'H'}
     assert one_s.is_deterministic() and h.is_deterministic()
     assert _definition_holds(one_s, rng) and _definition_holds(h, rng)
+
+
+def test_signs_are_reduced_mod_2():
+    # a sign is a sum mod 2: after H on every qubit of the [[5,1,3]] code, one sign used to print as
+    # c[3] + 8
+    from pyzx.symbolic import new_var
+    from zxqec.codes.pauli import phase_sum
+    c = new_var('c[3]', True)
+    assert str(phase_sum([c, 3, 5])) == 'c[3]' and str(phase_sum([c, 1])) == 'c[3] + 1'
+    assert phase_sum([3, 5]) == 0 and phase_sum([c, c]) == 0

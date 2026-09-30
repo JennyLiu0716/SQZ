@@ -376,3 +376,57 @@ def test_every_block_of_the_fold_transversal_h_stays_in_its_code():
     p = F.fold_transversal_h()
     s = p.summary(p.group_stages(FOLD_GROUPS))
     assert all(b.action.stays_in_code() is True for b in s.blocks)
+
+
+# -- the role 'transversal gate': no fault can spread inside a code block -------------------------
+
+_STEANE_TRANSVERSAL = [(0, 0, 'encode data', 'encoder'), (1, 2, 'prepare magic', 'state preparation'),
+                       (3, 3, 'check magic', 'syndrome extraction'), (4, 4, 'CNOT', 'transversal gate'),
+                       (5, 5, 'read out magic', 'logical measurement'), (6, 6, 'correct', 'correction')]
+
+
+def test_the_transversal_gates_of_the_case_studies_are_transversal():
+    p = steane_t_injection()
+    cnot = p.summary(p.group_stages(_STEANE_TRANSVERSAL)).blocks[3]
+    assert cnot.ok and any(msg.startswith('transversal') for _, msg in cnot.checks)
+    groups = [(a, b, name, 'transversal gate' if name == 'transversal H' else role)
+              for a, b, name, role in FOLD_GROUPS]
+    f = F.fold_transversal_h()
+    h = f.summary(f.group_stages(groups)).blocks[1]
+    assert h.role == 'transversal gate' and h.ok
+
+
+def test_a_logical_gate_inside_one_code_block_is_not_transversal():
+    # CNOT(0,1) twice is the logical identity, and a fine 'logical gate', but it connects two qubits
+    # of the Steane code, so it is not a 'transversal gate'
+    def program(role):
+        p = QProgram(7, initial_states={q: '0' for q in range(7) if q != 3})
+        c = Circuit(7)
+        for g in steane_encoder(list(range(7))):
+            c.add_gate(g)
+        p.add_circuit(c, name='encode')
+        c = Circuit(7)
+        c.add_gate(CNOT(0, 1))
+        c.add_gate(CNOT(0, 1))
+        p.add_circuit(c, name='CNOT(0,1) twice')
+        return p.summary(p.group_stages([(0, 0, 'encode', 'encoder'), (1, 1, 'CNOT(0,1) twice', role)])).blocks[1]
+    assert program('logical gate').ok
+    b = program('transversal gate')
+    assert b.operation() == 'I' and not b.ok
+    assert [msg for ok, msg in b.checks if not ok] == [
+        "not transversal: its gates connect qubits 0, 1 of the code block on qubits 0,1,2,3,4,5,6"]
+
+
+def test_a_fault_can_spread_inside_a_block_through_another_block():
+    # CNOT(0 -> 7) then CNOT(7 -> 1): each gate joins the two Steane blocks, but a fault on qubit 0
+    # can reach qubit 1
+    from zxqec.qprogram.summary import transversality_violations
+    code = steane_t_injection().code_at(3)
+    chain = Circuit(20)
+    chain.add_gate(CNOT(0, 7))
+    chain.add_gate(CNOT(7, 1))
+    assert transversality_violations(chain, code) == [([0, 1], [0, 1, 2, 3, 4, 5, 6])]
+    transversal = Circuit(20)
+    for q in range(7):
+        transversal.add_gate(CNOT(q, 7 + q))
+    assert transversality_violations(transversal, code) == []
