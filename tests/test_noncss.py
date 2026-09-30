@@ -264,3 +264,208 @@ def test_a_helper_qubit_in_plus_i_is_a_fixed_qubit():
     code = code_of(g)
     assert code.fixed_qubits() == {0: '+i'}
     _assert_code_fixes_its_image(g, code)
+
+
+# -- step 3: the ideal encoder and the logical action in codes that are not CSS ---------------------
+
+def _reference_encoder(code, values, rng):
+    """``E`` from its definition with numpy alone: ``Xbar^b`` applied to a code state with every ``Zbar = +1``."""
+    n, k = code.n, code.k
+    proj = np.eye(2 ** n, dtype=complex)
+    for p in list(code.stabilizers) + list(code.logical_z):
+        proj = proj @ (np.eye(2 ** n) + _matrix(p, values)) / 2
+    psi = proj @ (rng.normal(size=2 ** n) + 1j * rng.normal(size=2 ** n))
+    cols = []
+    for bits in itertools.product([0, 1], repeat=k):
+        v = psi
+        for i, b in enumerate(bits):
+            if b:
+                v = _matrix(code.logical_x[i], values) @ v
+        cols.append(v)
+    return np.array(cols).T
+
+
+def _proportional(a, b):
+    i = np.unravel_index(np.argmax(np.abs(b)), b.shape)
+    return abs(a[i]) > 1e-9 and np.allclose(a * (b[i] / a[i]), b, atol=1e-8)
+
+
+def _sign_values(code, rng):
+    names = {v.name for p in code.stabilizers if hasattr(p.sign, 'free_vars') for v in p.sign.free_vars()}
+    return {name: int(rng.integers(2)) for name in sorted(names)}
+
+
+def _encoder_matrix(e, values):
+    return (e.substitute_variables(values) if values else e).to_matrix()
+
+
+def _random_program(rng, n, k, stages, gates):
+    p = QProgram(n, bits=6, initial_states={q: rng.choice(['0', '+']) for q in range(k, n)})
+    m = 0
+    for stage in range(stages):
+        c = Circuit(n, bit_amount=6)
+        for _ in range(rng.randint(*gates)):
+            r = rng.random()
+            a, b = rng.sample(range(n), 2)
+            if r < 0.25:
+                c.add_gate(HAD(a))
+            elif r < 0.5:
+                c.add_gate(S(a))
+            elif r < 0.65:
+                c.add_gate(CZ(a, b))
+            elif r < 0.9:
+                c.add_gate(CNOT(a, b))
+            elif m < 3 and a >= k:
+                c.add_gate(Measurement(a, result_symbol='c[%d]' % m))
+                c.add_gate(Reset(a))
+                m += 1
+        p.add_circuit(c, name='stage %d' % stage)
+    return p
+
+
+def test_the_ideal_encoder_of_a_code_that_is_not_css_is_its_definition():
+    # E X_i = Xbar_i E, E Z_i = Zbar_i E and the image is the code space with its signs: compared with
+    # a matrix built from those properties alone
+    rng = np.random.default_rng(1)
+    c = Circuit(7)
+    for gate in steane_encoder(list(range(7))):
+        c.add_gate(gate)
+    c.add_gate(S(0))
+    codes = [_wheel_program().code_at(0), code_of(circuit_to_graph(c, initialize_qubits=[q != 3 for q in range(7)]))]
+    prng = random.Random(12)
+    mixed = 0
+    while sum(not x.is_css for x in codes) < 25:
+        p = _random_program(prng, prng.randint(3, 5), prng.randint(1, 2), prng.randint(1, 3), (3, 10))
+        try:
+            code = code_of(p.prefix_graph(p.num_stages - 1))
+        except NotACodeError:
+            continue
+        if not code.is_css and code.k:
+            codes.append(code)
+            mixed += any(any(x.z) for x in code.logical_x) or any(any(z.x) for z in code.logical_z)
+    for code in codes:
+        if code.is_css:
+            continue
+        values = _sign_values(code, rng)
+        assert _proportional(_encoder_matrix(code.encoder(), values), _reference_encoder(code, values, rng))
+    assert mixed > 0                     # logical operators that are neither pure X nor pure Z
+
+
+def test_the_choi_construction_gives_the_css_encoder_too():
+    # the general construction, used only for codes that are not CSS, agrees with the two-layer
+    # CSS encoder, outcome-dependent signs included
+    from zxqec.codes.code import _choi_encoder
+    from . import test_case_study_fold_h as F
+    from .programs import steane_t_injection
+    rng = np.random.default_rng(2)
+    for code in (F.fold_transversal_h().code_at(0).data(), steane_t_injection().code_at(3)):
+        assert code.is_css
+        for _ in range(2):
+            values = _sign_values(code, rng)
+            assert _proportional(_encoder_matrix(_choi_encoder(code), values),
+                                 _encoder_matrix(code.encoder(), values))
+
+
+def _reorder(m, labels, order):
+    """The rows of ``m``, indexed by qubits in the order ``labels``, re-indexed in the order ``order``."""
+    n = len(labels)
+    if list(labels) == list(order):
+        return m
+    t = m.reshape([2] * n + [m.shape[1]])
+    return t.transpose([list(labels).index(q) for q in order] + [n]).reshape(m.shape)
+
+
+def _definition_holds(act, rng):
+    """``B E_in = E_out L`` in every class of runs, with ``E`` from :func:`_reference_encoder`."""
+    from zxqec.spacetime.subdiagram import get_logical_qubit
+    blk = act.block
+    ins = [get_logical_qubit(blk, b) for b in blk.inputs()]
+    outs = [get_logical_qubit(blk, b) for b in blk.outputs()]
+    for br in act.branches():
+        values = {k: int(v) for k, v in br.outcomes.items()}
+        lhs = _encoder_matrix(blk, values) @ _reorder(_reference_encoder(act.code_in, values, rng),
+                                                      act.code_in.qubits, ins)
+        rhs = _reorder(_reference_encoder(act.code_out, values, rng), act.code_out.qubits, outs) @ \
+            act.matrix(br.outcomes)
+        if not _proportional(lhs, rhs):
+            return False
+    return True
+
+
+def test_logical_actions_in_codes_that_are_not_css_are_those_of_the_definition():
+    # every stage of random multi-stage Clifford programs with inputs and measurements: the tool's
+    # logical action L satisfies B E_in = E_out L in every class of runs (Proposition on the logical
+    # action), with E built from the codes by numpy alone
+    prng = random.Random(7)
+    rng = np.random.default_rng(3)
+    checked = non_css = 0
+    while non_css < 30:
+        p = _random_program(prng, prng.randint(3, 5), prng.randint(1, 2), prng.randint(2, 3), (2, 8))
+        for s in range(1, p.num_stages):
+            try:
+                act = p.logical_action(0, s)
+            except (NotACodeError, OutcomeDependentCodeError):
+                continue
+            assert act.stays_in_code() is True       # the code after a stage is read from its image
+            assert _definition_holds(act, rng)
+            checked += 1
+            non_css += not (act.code_in.is_css and act.code_out.is_css)
+    assert checked >= non_css >= 30
+
+
+def _on_every_qubit(code, gates, qubits=None):
+    from zxqec.codes.logical import set_logical_qubit
+    c = Circuit(code.n)
+    for j in range(code.n) if qubits is None else qubits:
+        for gate in gates:
+            c.add_gate(gate(j))
+    b = c.to_graph()
+    for v, q in zip(b.inputs(), code.qubits):
+        set_logical_qubit(b, v, q)
+    for v, q in zip(b.outputs(), code.qubits):
+        set_logical_qubit(b, v, q)
+    return b
+
+
+def test_transversal_cliffords_on_the_five_qubit_code():
+    # the [[5,1,3]] code is kept by the order-3 Clifford applied to every qubit (HS or SH), and by
+    # none of H, S, HSH; T on one qubit leaves it too. Where the tool says a block stays in the code,
+    # B E_in = E_out L holds, and where it says the block leaves, it does not
+    from pyzx.circuit.gates import T
+    from zxqec.codes import logical_action
+    rng = np.random.default_rng(4)
+    code = _wheel_program().code_at(0).data()
+    for gates, name in (([HAD, S], 'SH'), ([S, HAD], 'HS')):
+        act = logical_action(_on_every_qubit(code, gates), code, code)
+        assert act.stays_in_code() is True and act.is_deterministic() and act.operations() == {name}
+        assert _definition_holds(act, rng)
+    for gates, qubits in (([HAD], None), ([S], None), ([HAD, S, HAD], None), ([T], [0])):
+        act = logical_action(_on_every_qubit(code, gates, qubits), code, code)
+        assert act.stays_in_code() is False and act.verdict().startswith("leaves the code")
+        assert not _definition_holds(act, rng)
+
+
+def test_logical_gates_in_the_steane_code_after_an_s_gate():
+    # S on qubit 0 moves the Steane code to a code that is not CSS without changing the logical
+    # state; S^dag(0) H^7 S(0) keeps that code and is its logical H
+    rng = np.random.default_rng(5)
+    p = QProgram(7, initial_states={q: '0' for q in range(7) if q != 3})
+    c = Circuit(7)
+    for gate in steane_encoder(list(range(7))):
+        c.add_gate(gate)
+    p.add_circuit(c, name='encode')
+    c = Circuit(7)
+    c.add_gate(S(0))
+    p.add_circuit(c, name='one S')
+    c = Circuit(7)
+    for _ in range(3):
+        c.add_gate(S(0))
+    for q in range(7):
+        c.add_gate(HAD(q))
+    c.add_gate(S(0))
+    p.add_circuit(c, name='H in the new code')
+    one_s, h = p.logical_action(0, 1), p.logical_action(0, 2)
+    assert one_s.code_in.is_css and not one_s.code_out.is_css and one_s.operations() == {'I'}
+    assert not h.code_in.is_css and h.code_in.same_code_as(h.code_out) and h.operations() == {'H'}
+    assert one_s.is_deterministic() and h.is_deterministic()
+    assert _definition_holds(one_s, rng) and _definition_holds(h, rng)

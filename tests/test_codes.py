@@ -244,22 +244,39 @@ def test_t_on_one_qubit_is_non_clifford_not_non_css():
 
 
 def test_summary_reports_what_it_cannot_compute_instead_of_crashing():
-    # the code after one S is read (a non-CSS [[7,1,3]]), but its ideal encoder, and so the
-    # logical action of the block, is only built for CSS codes so far
-    from pyzx.circuit.gates import S
-    p = QProgram(7, initial_states={q: '0' for q in range(7) if q != 3})
-    c = Circuit(7)
+    # an S applied only when m = 1 makes the code itself differ between runs; the summary says so
+    # in the block's row instead of raising
+    from pyzx.circuit.gates import Measurement
+    from zxqec.qprogram import ParityControlled
+    p = QProgram(8, bits=1, initial_states={**{q: '0' for q in range(7) if q != 3}, 7: '+'})
+    c = Circuit(8, bit_amount=1)
     for g in steane_encoder(list(range(7))):
         c.add_gate(g)
-    p.add_circuit(c, name='encode')
-    s1 = Circuit(7)
-    s1.add_gate(S(0))
-    p.add_circuit(s1, name='one S')
+    c.add_gate(Measurement(7, result_symbol='m'))
+    p.add_circuit(c, name='encode, and a random bit')
+    s1 = Circuit(8, bit_amount=1)
+    s1.add_gate(ParityControlled('S', 0, ['m']))
+    p.add_circuit(s1, name='S if m = 1')
     s = p.summary(0)
     assert s.blocks[0].ok
-    assert not s.blocks[1].ok
-    assert s.blocks[1].code_out.parameters == (7, 1, 3) and not s.blocks[1].code_out.is_css
-    assert any('logical action' in msg and 'CSS' in msg for ok, msg in s.blocks[1].checks if not ok)
+    assert not s.blocks[1].ok and s.blocks[1].code_out is None and s.blocks[1].action is None
+    assert any('differs between runs' in msg for ok, msg in s.blocks[1].checks if not ok)
+
+
+def test_a_code_block_that_joins_two_is_one_part():
+    # qubit 1 is encoded with qubit 2 ([[2,1]]), then CNOT 0 -> 2 makes one code block of all three:
+    # the logical action is one part, not two overlapping ones
+    p = QProgram(3, initial_states={2: '0'})
+    c = Circuit(3)
+    c.add_gate(CNOT(1, 2))
+    p.add_circuit(c, name='encode 1 with 2')
+    c = Circuit(3)
+    c.add_gate(CNOT(0, 2))
+    p.add_circuit(c, name='CNOT 0 -> 2')
+    act = p.logical_action(0, 1)
+    assert [list(b.qubits) for b in act.code_in.blocks()] == [[0], [1, 2]]
+    assert [list(b.qubits) for b in act.code_out.blocks()] == [[0, 1, 2]]
+    assert act.parts() == [([0, 1], [0, 1], 'qubits 0-2')]
 
 
 # -- a block must map the code into the code: the logical action is computed up to a scalar ---------

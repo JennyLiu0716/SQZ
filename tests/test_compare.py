@@ -13,7 +13,6 @@ from pyzx.circuit.gates import HAD, Reset
 
 from . import test_case_study_fold_h as F
 from .programs import steane_t_injection
-from .test_noncss import _wheel_program
 from .test_codes import FOLD_GROUPS
 from zxqec.qprogram import QProgram, compare_programs
 
@@ -98,11 +97,38 @@ def test_a_check_wired_to_the_wrong_qubit_changes_the_code_after_it():
     assert any(n.startswith('code after:') for n in first.notes)
 
 
-def test_an_action_that_cannot_be_computed_is_not_decided_rather_than_different():
-    # the [[5,1,3]] code is not CSS, so its logical action is not computed: the program compared with
-    # itself has the same codes and nothing different, and must not be reported as different
-    a, b = _wheel_program(), _wheel_program()
+def _s_if_m():
+    """Steane, then S on qubit 0 only when a random bit m is 1: the code after differs between runs."""
+    from pyzx.circuit import Circuit
+    from pyzx.circuit.gates import Measurement
+    from .programs import steane_encoder
+    from zxqec.qprogram import ParityControlled
+    p = QProgram(8, bits=1, initial_states={**{q: '0' for q in range(7) if q != 3}, 7: '+'})
+    c = Circuit(8, bit_amount=1)
+    for gate in steane_encoder(list(range(7))):
+        c.add_gate(gate)
+    c.add_gate(Measurement(7, result_symbol='m'))
+    p.add_circuit(c, name='encode, and a random bit')
+    s = Circuit(8, bit_amount=1)
+    s.add_gate(ParityControlled('S', 0, ['m']))
+    p.add_circuit(s, name='S if m = 1')
+    return p
+
+
+def test_what_cannot_be_computed_is_not_decided_rather_than_different():
+    # the code after 'S if m = 1' differs between runs, so it and the block's logical action are
+    # unknown: the program compared with itself has nothing different, and must not be reported as
+    # different
+    a, b = _s_if_m(), _s_if_m()
     c = compare_programs(a, b, 0)
-    assert c.blocks[0].same_code_before and c.blocks[0].same_code_after and c.blocks[0].same_action is None
+    assert c.blocks[0].ok
+    assert c.blocks[1].same_code_before and c.blocks[1].same_code_after is None and c.blocks[1].same_action is None
     assert not c.ok and not c.differs and c.first_difference() is None
     assert c.verdict().startswith("not decided")
+
+
+def test_programs_in_a_code_that_is_not_css_are_compared_in_full():
+    # the [[5,1,3]] code: its logical action is computed, so the program equals itself
+    from .test_noncss import _wheel_program
+    a, b = _wheel_program(), _wheel_program()
+    assert compare_programs(a, b, 0).ok

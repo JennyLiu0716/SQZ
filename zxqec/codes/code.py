@@ -60,7 +60,7 @@ from typing import Any
 import numpy as np
 from pyzx.graph import Graph
 from pyzx.graph.base import BaseGraph
-from pyzx.utils import VertexType
+from pyzx.utils import EdgeType, VertexType
 
 from ..gpf import has_boundary_hadamard, is_leaf, is_stem, reduce_gpf
 from .pauli import phase_sum as _sum
@@ -373,11 +373,13 @@ class StabilizerCode:
         It is the isometry ``E`` with ``E X_i = Xbar_i E`` and ``E Z_i = Zbar_i E``
         for the canonical logical operators, whose image is the code space with the
         stabilizer signs of this code (which may be Boolean functions of outcomes).
-        Its adjoint is the ideal decoder. Up to a non-zero scalar. CSS codes only.
+        Its adjoint is the ideal decoder. Up to a non-zero scalar.
+
+        For a CSS code it is the two-layer diagram below; for any other stabilizer
+        code it is read off its Choi state (:func:`_choi_encoder`).
         """
         if not self.is_css:
-            raise NotImplementedError("the ideal encoder is only built for CSS codes so far, so the logical "
-                                      "action in a code that is not CSS is not computed yet")
+            return _choi_encoder(self)
         stabs = self.stabilizers
         xs = [(p, p.sign) for p in stabs if any(p.x)]
         zs = [(p, p.sign) for p in stabs if any(p.z)]
@@ -919,6 +921,127 @@ def _independent_mixed(xs: np.ndarray, zs: np.ndarray, signs: list[Any],
         if z.any():
             extra.append((z, sg))
     return as_matrix(out_x, n), as_matrix(out_z, n), out_s, extra
+
+
+def _choi_encoder(code: 'StabilizerCode') -> BaseGraph:
+    """The ideal encoder of any stabilizer code, read off its Choi state.
+
+    ``sum_b |b> (x) E|b>`` is the stabilizer state on ``k + n`` qubits with the
+    generators ``I (x) g`` for the stabilizers ``g`` of the code (with their
+    signs) and ``X_i (x) Xbar_i``, ``Z_i (x) Zbar_i`` for its canonical logical
+    operators: ``X_i (x) Xbar_i`` fixes it exactly when ``Xbar_i E = E X_i``, and
+    likewise for ``Z``. These ``n + k`` generators are independent and commute,
+    so they fix the state up to a scalar. :func:`_stabilizer_state` draws it,
+    and its first ``k`` outputs become the inputs, which reads the same tensor
+    as a map: the route of Yeh et al. (Section 4.1, "un-Choi"). Up to a
+    non-zero scalar.
+    """
+    n, k = code.n, code.k
+    m = n + k
+    xs: list[list[int]] = []
+    zs: list[list[int]] = []
+    signs: list[Any] = []
+    none = [0] * k
+    for p in code.stabilizers:
+        xs.append(none + list(p.x))
+        zs.append(none + list(p.z))
+        signs.append(p.sign)
+    for i, (lx, lz) in enumerate(zip(code.logical_x, code.logical_z)):
+        e = [int(j == i) for j in range(k)]
+        xs.append(e + list(lx.x))
+        zs.append(none + list(lx.z))
+        signs.append(lx.sign)
+        xs.append(none + list(lz.x))
+        zs.append(e + list(lz.z))
+        signs.append(lz.sign)
+    g = _stabilizer_state(as_matrix(xs, m), as_matrix(zs, m), signs, m)
+    bounds = list(g.outputs())
+    for i, b in enumerate(bounds[:k]):
+        g.set_qubit(b, i)
+    for j, b in enumerate(bounds[k:]):
+        g.set_qubit(b, j)
+    g.set_inputs(tuple(bounds[:k]))
+    g.set_outputs(tuple(bounds[k:]))
+    return g
+
+
+def _stabilizer_state(xs: np.ndarray, zs: np.ndarray, signs: list[Any], m: int) -> BaseGraph:
+    """A ZX-diagram, up to a scalar, of the state fixed by ``m`` independent commuting generators.
+
+    Generator ``j`` is ``(-1)^signs[j] L(xs[j], zs[j])`` as in :func:`_times`; the
+    signs may be Boolean polynomials. The state is
+    ``D sum_y (-1)^(rho . y) |y R + t>``, where the rows ``v_j`` of ``R`` are the
+    independent X parts of generators ``(-1)^s_j L(v_j, w_j)``, ``t`` gives the
+    Z-type generators ``(-1)^s Z^w`` their signs (``w . t = s``), and ``D`` is the
+    diagonal Clifford ``|x> -> i^(a . x) (-1)^(sum_{q<p} B_qp x_q x_p) |x>`` (``S``
+    gates and ``CZ`` s) with ``Gamma = diag(a) + B`` symmetric and ``R Gamma = W``:
+    the factorisation of a stabilizer tableau into an inner CSS code and a
+    diagonal Clifford of Yeh, Huang, Kissinger, Li and van de Wetering (*A
+    three-way normal form for stabiliser codes*, Theorem 6.1 and Proposition
+    6.2), with the signs added. Generator ``j`` shifts ``y_j`` by one and
+    multiplies the term of ``x`` by ``i^(a.v_j - v_j.w_j) (-1)^(Q(v_j) + rho_j)``
+    over its own phase (``Gamma v_j = w_j`` cancels the parts that depend on
+    ``x``), and ``rho_j`` makes the factor 1. This is not their reduced or
+    isometry normal form, which is unique; the logical action does not need one.
+    """
+    vx, vz, vs, pure_z = _independent_mixed(xs, zs, signs, m)
+    r = vx.shape[0]
+    if r + len(pure_z) != m:
+        raise ValueError("not a full set of independent stabilizer generators")
+    t = _solve_symbolic(as_matrix([z for z, _ in pure_z], m), [s for _, s in pure_z], m)
+    gamma = np.zeros((m, m), dtype=np.int64)
+    if r:
+        rinv = np.zeros((m, r), dtype=np.int64)          # R rinv = I
+        for col in range(r):
+            unit = np.zeros(r, dtype=np.uint8)
+            unit[col] = 1
+            u = solve(vx, unit)
+            if u is None:
+                raise ValueError("the X parts are not independent")
+            rinv[:, col] = u
+        rv, rw = vx.astype(np.int64), vz.astype(np.int64)
+        if not ((rv @ rw.T) % 2 == (rw @ rv.T) % 2).all():
+            raise ValueError("the generators do not commute")
+        # Yeh et al., Proposition 6.2: G = R N + N^T R^T + R H N^T R^T is symmetric and H G = N,
+        # for H the X parts, N the Z parts and R a right inverse of H (the tableau normal form
+        # [H | H G ; 0 | H_Z] of their Theorem 6.1)
+        gamma = (rinv @ rw + rw.T @ rinv.T + rinv @ rv @ rw.T @ rinv.T) % 2
+        assert ((rv @ gamma) % 2 == rw).all() and (gamma == gamma.T).all()
+    a = np.diag(gamma).copy()
+    b = np.triu(gamma, 1)
+    rho = []
+    for v, w, s in zip(vx.astype(np.int64), vz.astype(np.int64), vs):
+        av, vw = int(a @ v), int(v @ w)
+        assert (av - vw) % 2 == 0
+        rho.append(_sum([s, ((av - vw) % 4) // 2, int(v @ b @ v) % 2]))
+    g = Graph()
+    reg = g.var_registry
+    for ph in list(t) + rho:
+        for var in getattr(ph, 'free_vars', lambda: set())():
+            reg.set_type(var.name, True)
+    xsp, last, outs = [], [], []
+    for q in range(m):
+        x = g.add_vertex(VertexType.X, q, 2, t[q])
+        end = x
+        if a[q] or (gamma[q].sum() - gamma[q, q]):
+            end = g.add_vertex(VertexType.Z, q, 3, Fraction(int(a[q]), 2))
+            g.add_edge((x, end))
+        o = g.add_vertex(VertexType.BOUNDARY, q, 4)
+        g.add_edge((end, o))
+        xsp.append(x)
+        last.append(end)
+        outs.append(o)
+    for q in range(m):
+        for p in range(q + 1, m):
+            if b[q, p]:
+                g.add_edge((last[q], last[p]), EdgeType.HADAMARD)
+    for j, (v, ph) in enumerate(zip(vx, rho)):
+        z = g.add_vertex(VertexType.Z, j, 1, ph)
+        for q in np.flatnonzero(v):
+            g.add_edge((z, xsp[int(q)]))
+    g.set_outputs(tuple(outs))
+    g.rebind_variables_to_registry()
+    return g
 
 
 def _min_weight_basis_mixed(xs: np.ndarray, zs: np.ndarray, signs: list[Any], n: int, sz: np.ndarray,

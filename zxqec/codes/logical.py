@@ -337,16 +337,26 @@ class LogicalAction:
                 out.append((blk, i))
             return out
         gin, gout = groups(self.code_in), groups(self.code_out)
-        keys: list[frozenset] = []
+        # disjoint unions of overlapping blocks; a block that overlaps several groups joins them
+        # all (transitively), in the place of the first
+        keys: list[frozenset | None] = []
         for blk, _ in gin + gout:
-            for k in keys:
-                if k & blk:
-                    keys[keys.index(k)] = k | blk
-                    break
+            merged, first = blk, None
+            changed = True
+            while changed:
+                changed = False
+                for i, k in enumerate(keys):
+                    if k is not None and k & merged:
+                        merged, keys[i] = merged | k, None
+                        first = i if first is None else min(first, i)
+                        changed = True
+            if first is None:
+                keys.append(merged)
             else:
-                keys.append(blk)
+                keys[first] = merged
+        joined: list[frozenset] = [k for k in keys if k is not None]
         parts = []
-        for k in keys:
+        for k in joined:
             ins = [i for blk, i in gin if blk & k]
             outs = [i for blk, i in gout if blk & k]
             parts.append((ins, outs, _qubit_range(k)))
