@@ -159,3 +159,208 @@ def _needs_steps(g):
     finally:
         NF._find_bialgebra_pair = find
     return len(seen) > 1
+
+
+# -- the row reduction settles after one changing round, when to_gpf's post-condition holds ---------
+
+def _internal_edges(h):
+    """Edges between a Z-spider not on an input and an X-spider not on an output, gadgets aside."""
+    ins, outs = set(h.inputs()), set(h.outputs())
+    bad = 0
+    for e in h.edges():
+        u, v = h.edge_st(e)
+        if VertexType.BOUNDARY in (h.type(u), h.type(v)) or NF.is_leaf(h, u) or NF.is_leaf(h, v):
+            continue
+        z, x = (u, v) if h.type(u) == VertexType.Z else (v, u)
+        if NF.is_stem(h, z) or NF.is_stem(h, x):
+            continue
+        bad += not (NF._touches(h, z, ins) or NF._touches(h, x, outs))
+    return bad
+
+
+def _alternate(h):
+    """The row-reduction rounds of reduce_gpf with the gadget passes off, on a diagram already in GPF:
+    ``(changed, spiders deleted, internal edges afterwards)`` per round."""
+    out = []
+    while True:
+        n0 = h.num_vertices()
+        changed = False
+        for side in (VertexType.Z, VertexType.X):
+            m = R.split_matrix(h, side)
+            before = ([row[:] for row in m.entries], [str(p) for p in m.phases])
+            R.reduce_rows(m)
+            if m.entries != before[0] or [str(p) for p in m.phases] != before[1]:
+                changed = True
+            R.apply_matrix(h, m)
+        R._remove_isolated_pairs(h)
+        out.append((changed, n0 - h.num_vertices(), _internal_edges(h)))
+        if not changed or len(out) > 50:
+            return out
+
+
+def _case_study_graphs():
+    import os
+    from . import test_case_study_fold_h as F
+    from .programs import steane_t_injection
+    from zxqec.qprogram import program_from_stim
+    path = os.path.join(os.path.dirname(__file__), '..', 'examples', 'circuits', 'cultivation', 'd3_cultivation.stim')
+    return [F.fold_transversal_h().quantum_graph(), steane_t_injection().quantum_graph(),
+            program_from_stim(open(path).read())[0].quantum_graph()]
+
+
+def test_to_gpf_leaves_no_edge_between_spiders_off_the_boundary():
+    # the skeleton loop stops only when no such edge is left, and padding and splitting add edges at
+    # the boundary only: the hypothesis of the two-round lemma
+    for g in list(_random_circuits(7, 120)) + _case_study_graphs():
+        assert _internal_edges(NF.to_gpf(g)) == 0
+
+
+def test_without_gadget_passes_the_alternation_takes_at_most_two_rounds(monkeypatch):
+    count = _round_counter(monkeypatch)
+    for g in list(_random_circuits(7, 120)) + _case_study_graphs():
+        count[0] = 0
+        reduce_gpf(g, gadgets=False)
+        assert count[0] <= 2
+
+
+def _random_gpf(rng, gadget_rate, boundary_property):
+    """A random diagram in GPF: bipartite Z-X, inputs on Z-spiders, outputs on X-spiders, Pauli phases,
+    some gadgets; with ``boundary_property`` every Z-X edge has its Z on an input or its X on an output."""
+    from fractions import Fraction
+    from pyzx.graph import Graph
+    from pyzx.symbolic import new_var
+    g = Graph()
+    kinds = ['Z'] * rng.randint(2, 9) + ['X'] * rng.randint(2, 9)
+    rng.shuffle(kinds)
+    zs, xs = [], []
+    for k in kinds:
+        (zs if k == 'Z' else xs).append(g.add_vertex(VertexType.Z if k == 'Z' else VertexType.X, 0, 1))
+    ins, outs = [], []
+    for z in zs:
+        if rng.random() < 0.35:
+            b = g.add_vertex(VertexType.BOUNDARY, len(ins), 0)
+            g.add_edge((b, z))
+            ins.append(b)
+    for x in xs:
+        if rng.random() < 0.35:
+            b = g.add_vertex(VertexType.BOUNDARY, len(outs), 3)
+            g.add_edge((x, b))
+            outs.append(b)
+    zin = {n for b in ins for n in g.neighbors(b)}
+    xout = {n for b in outs for n in g.neighbors(b)}
+    p = rng.uniform(0.2, 0.7)
+    for z in zs:
+        for x in xs:
+            if (not boundary_property or z in zin or x in xout) and rng.random() < p:
+                g.add_edge((z, x))
+    for v in zs + xs:
+        r = rng.random()
+        if r < 0.25:
+            g.set_phase(v, Fraction(1))
+        elif r < 0.45:
+            g.set_phase(v, new_var('c[%d]' % rng.randint(0, 3), True, g.var_registry))
+    for hubs, leaf_ty in ((xs, VertexType.Z), (zs, VertexType.X)):
+        for h in hubs:
+            if h not in zin | xout and rng.random() < gadget_rate:
+                leaf = g.add_vertex(leaf_ty, 0, 4)
+                g.set_phase(leaf, Fraction(1, 4))
+                g.set_vdata(leaf, NF.GPF_ROLE_KEY, NF.LEAF)
+                g.add_edge((h, leaf))
+    g.set_inputs(tuple(ins))
+    g.set_outputs(tuple(outs))
+    return g
+
+
+def test_two_rounds_on_random_diagrams_with_the_property():
+    # the lemma, on diagrams built directly: with no internal edge, the second round changes nothing,
+    # and no round creates an internal edge
+    for gadget_rate in (0.0, 0.2):
+        rng = random.Random(2026)
+        tried = 0
+        while tried < 1500:
+            g = _random_gpf(rng, gadget_rate, boundary_property=True)
+            if not NF.is_gpf(g):
+                continue
+            tried += 1
+            rounds = _alternate(g.copy())
+            assert len(rounds) <= 2 and not rounds[-1][0]
+            assert all(internal == 0 for _changed, _deleted, internal in rounds)
+
+
+def _load_counterexamples():
+    import json
+    import os
+    from fractions import Fraction
+    from pyzx.graph import Graph
+    from pyzx.symbolic import new_var
+    path = os.path.join(os.path.dirname(__file__), 'data', 'alternation_counterexamples.json')
+    out = []
+    for d in json.load(open(path))['diagrams']:
+        g = Graph()
+        new = {}
+        for v in d['vertices']:                               # in the saved order, which fixes the pivots
+            ty = {'Z': VertexType.Z, 'X': VertexType.X, 'B': VertexType.BOUNDARY}[v['type']]
+            w = g.add_vertex(ty, 0, 0)
+            if 'var' in v['phase']:
+                g.set_phase(w, new_var(v['phase']['var'], True, g.var_registry))
+            elif v['phase']['const'] != '0':
+                g.set_phase(w, Fraction(v['phase']['const']))
+            if v['leaf']:
+                g.set_vdata(w, NF.GPF_ROLE_KEY, NF.LEAF)
+            new[v['id']] = w
+        for a, b in d['edges']:
+            g.add_edge((new[a], new[b]))
+        g.set_inputs(tuple(new[b] for b in d['inputs']))
+        g.set_outputs(tuple(new[b] for b in d['outputs']))
+        out.append((g, d))
+    return out
+
+
+def test_the_saved_counterexamples_need_more_rounds_without_the_property():
+    # tests/data/alternation_counterexamples.json: diagrams with an internal edge, which to_gpf never
+    # leaves, on which the alternation needs three or four rounds; so the lemma needs its hypothesis
+    loaded = _load_counterexamples()
+    assert len(loaded) == 16 and sum(1 for _g, d in loaded if d['rounds'] == 4) == 6
+    for g, d in loaded:
+        assert NF.is_gpf(g) and _internal_edges(g) > 0
+        rounds = _alternate(g.copy())
+        assert len(rounds) == d['rounds'] > 2
+        assert any(ch and deleted <= 0 for ch, deleted, _i in rounds[1:]) == d['later_round_changes_without_deleting']
+
+
+def test_the_gadget_passes_can_break_the_property():
+    # which is why the lemma covers the alternation between gadget passes but not the whole loop
+    from collections import Counter
+    seen = Counter()
+    for g in list(_random_circuits(7, 120)) + _case_study_graphs():
+        h = R.to_gpf(g)
+        R._scalar_constraints(h)
+        for _ in range(60):
+            changed = _alternate_once(h)
+            how = None
+            if not changed and R.simplify_gadgets(h):
+                how = 'gadgets'
+            if not changed and how is None:
+                if R._expose_free_bits(h) is not None:
+                    how = 'expose'
+                elif R._resolve_checks(h) is not None:
+                    how = 'resolve'
+            if how is None and not changed:
+                break
+            if how is not None:
+                seen[(how, _internal_edges(h) == 0)] += 1
+    assert seen == {('gadgets', False): 100, ('gadgets', True): 134, ('expose', True): 28,
+                    ('expose', False): 4, ('resolve', True): 16, ('resolve', False): 1}
+
+
+def _alternate_once(h):
+    changed = False
+    for side in (VertexType.Z, VertexType.X):
+        m = R.split_matrix(h, side)
+        before = ([row[:] for row in m.entries], [str(p) for p in m.phases])
+        R.reduce_rows(m)
+        if m.entries != before[0] or [str(p) for p in m.phases] != before[1]:
+            changed = True
+        R.apply_matrix(h, m)
+    R._remove_isolated_pairs(h)
+    return changed
