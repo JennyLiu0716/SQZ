@@ -22,13 +22,17 @@
   and merging of blocks separated only by stages on other qubits;
 * :class:`ParityControlled` -- a correction applied when the XOR of some
   measurement outcomes is 1 (feed-forward), kept symbolic in the diagram;
-* :func:`program_from_stim` -- a program from a circuit in Stim's text format.
+* :func:`program_from_stim` -- a program from a circuit in Stim's text format;
+* :func:`compare_programs` -- two programs compared block by block: the same
+  codes, the same logical operations up to a Pauli frame, the same detectors.
 """
 
+from .compare import BlockComparison, ProgramComparison, compare_programs
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage
 from .stim_text import StimCircuit, parse_stim, program_from_stim
 
 __all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled',
-           'StimCircuit', 'parse_stim', 'program_from_stim']
+           'StimCircuit', 'parse_stim', 'program_from_stim',
+           'BlockComparison', 'ProgramComparison', 'compare_programs']

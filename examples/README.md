@@ -37,6 +37,14 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   form, one T† gadget, and T†|+⟩ fed into the encoder of the colour code), and checks every picture against the circuit by tensor contraction in all 32 runs the
   detectors allow; the pictures come from [zx_steps.py](zx_steps.py). Every claim is then checked
   with an independent state-vector simulation.
+- [ComparingPrograms.ipynb](ComparingPrograms.ipynb) — are two programs the same *logically*? A
+  demo of `compare_programs`, for comparing a circuit as written with a compiled one: block by block,
+  the same codes, the same logical operations up to a Pauli frame, and the same detectors. Four
+  variants of the Steane T injection (Z checks measured first and `S` instead of `S†` in the
+  correction are equivalent; no correction changes the logical action; a check wired to the wrong
+  qubit changes the code), and the thesis's mis-wired fold-transversal H, whose codes and logical
+  operations are all correct and which only the lost detectors (24 against 22) reveal, located in
+  the round with the wrong check. Ends with what the comparison does not show.
 - [SteaneTInjection.ipynb](SteaneTInjection.ipynb) — a `T` gate injected into the [[7,1,3]] Steane
   code, from the physical circuit to the logical gate. **Written for a reader with no quantum error
   correction background**: it draws the code and its stabilizers, the injection gadget and the
