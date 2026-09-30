@@ -24,10 +24,14 @@
   measurement outcomes is 1 (feed-forward), kept symbolic in the diagram;
 * :func:`program_from_stim` -- a program from a circuit in Stim's text format;
 * :func:`compare_programs` -- two programs compared block by block: the same
-  codes, the same logical operations up to a Pauli frame, the same detectors.
+  codes, the same logical operations up to a Pauli frame, the same detectors;
+* :func:`check_detectors` -- declared detectors (e.g. Stim's ``DETECTOR`` lines)
+  checked against the ones the tool derives: deterministic with their value,
+  not deterministic with two runs as evidence, or unknown.
 """
 
 from .compare import BlockComparison, ProgramComparison, compare_programs
+from .declared import DeclaredDetector, DetectorCheck, check_detectors
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage
@@ -35,4 +39,5 @@ from .stim_text import StimCircuit, parse_stim, program_from_stim
 
 __all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled',
            'StimCircuit', 'parse_stim', 'program_from_stim',
-           'BlockComparison', 'ProgramComparison', 'compare_programs']
+           'BlockComparison', 'ProgramComparison', 'compare_programs',
+           'DeclaredDetector', 'DetectorCheck', 'check_detectors']

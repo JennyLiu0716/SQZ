@@ -30,7 +30,8 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
 - [Cultivation.ipynb](Cultivation.ipynb) — d = 3 magic-state cultivation, from the circuit of Wan,
   Zhong and Zapirain in Stim's format (`circuits/cultivation/`, Apache-2.0, with attribution). The tool
   finds the colour code after the injection, derives all 26 detectors the authors wrote by hand (two of
-  them only once the layer of T gates is simplified as a whole), reads the double-check as a logical
+  them only once the layer of T gates is simplified as a whole; `check_detectors` reports each declared one as
+  deterministic, not deterministic with two runs as evidence, or unknown), reads the double-check as a logical
   measurement in the basis {T†|+⟩, T†|−⟩}, and shows that every noiseless run prepares T†|+⟩ up to a
   Pauli correction. Part 4 draws the reduction step by step, as the thesis did (the circuit, the
   normal form with 15 T-type gadgets, the same gadgets in the code's variables as in block
