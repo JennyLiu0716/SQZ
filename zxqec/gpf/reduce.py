@@ -63,7 +63,7 @@ class GPFResult:
 
 
 def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
-               max_rounds: int = 20, gadgets: bool = True) -> GPFResult:
+               max_rounds: int | None = None, gadgets: bool = True) -> GPFResult:
     """Reduce ``g`` to GPF with phases and no further row reduction; see the module docstring.
 
     The result is reduced in the sense that no free row is empty and the free
@@ -73,6 +73,12 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     ``isolate_paulis=True`` isolates every non-zero phase into a gadget (the
     thesis's behaviour); by default Pauli phases stay on the spiders and are
     carried through the row reduction.
+
+    ``max_rounds`` caps the alternation of the two layers (default ``20 + 2|V|``
+    for the normal form's ``|V|`` vertices). Every round preserves the diagram's
+    map, but that the alternation terminates is not proved: a round can change
+    the diagram without deleting a spider. Reaching the cap raises
+    ``RuntimeError``; it never returns a partial result.
 
     With ``gadgets`` (the default, and only without ``isolate_paulis``), once the
     row reduction settles the layer of Z-gadgets is simplified as a whole
@@ -86,6 +92,8 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     """
     h = to_gpf(g, isolate_paulis=isolate_paulis)
     constraints = _scalar_constraints(h)
+    if max_rounds is None:
+        max_rounds = 20 + 2 * h.num_vertices()
     converged = False
     for _ in range(max_rounds):
         changed = False

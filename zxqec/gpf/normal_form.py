@@ -53,7 +53,7 @@ from pyzx.utils import EdgeType, VertexType, is_pauli, toggle_vertex
 
 from .hadamard import push_hadamards_to_boundary
 
-__all__ = ['GPF_ROLE_KEY', 'LEAF', 'to_gpf', 'is_leaf', 'is_stem', 'is_gpf', 'layout_gpf']
+__all__ = ['GPF_ROLE_KEY', 'LEAF', 'to_gpf', 'is_leaf', 'is_stem', 'is_gpf', 'layout_gpf', 'skeleton_count']
 
 GPF_ROLE_KEY = 'gpf'
 LEAF = 'leaf'
@@ -99,8 +99,12 @@ def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     4. pad every input with a Z-spider and every output with an X-spider where
        needed, and give every spider at most one boundary.
 
-    ``max_steps`` bounds the number of bialgebra applications (default
-    ``10 * (|V| + 1)^2``); exceeding it raises ``RuntimeError``.
+    ``max_steps`` bounds the number of bialgebra applications. By default it is
+    the bound of the termination lemma (appendix A of the paper, after Yeh et
+    al., Lemma B.1): the number of Z-spiders that are neither leaves nor stems
+    and touch no input when step 3 starts (:func:`skeleton_count`), which every
+    application lowers. Exceeding it raises ``RuntimeError``, which with the
+    default bound means a bug.
     """
     h = g.copy()
     for v in h.vertices():
@@ -112,7 +116,7 @@ def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     h.remove_isolated_vertices()
 
     _isolate_phases(h, isolate_paulis)
-    _reduce_skeleton(h, max_steps if max_steps is not None else 10 * (h.num_vertices() + 1) ** 2)
+    _reduce_skeleton(h, max_steps if max_steps is not None else skeleton_count(h))
     _pad_boundaries(h)
     _split_multi_boundary_spiders(h)
     layout_gpf(h)
@@ -188,6 +192,19 @@ def _on_boundary(g: BaseGraph[VT, ET], v: VT) -> bool:
     return any(g.type(w) == VertexType.BOUNDARY for w in g.neighbors(v))
 
 
+def skeleton_count(g: BaseGraph[VT, ET]) -> int:
+    """The Z-spiders that are neither leaves nor stems and touch no input.
+
+    Every step of the skeleton reduction removes one of them (its Z-spider) and
+    creates none: a new Z-spider sits on another leg of the X-spider, which is a
+    Z-spider it fuses into or an input. So the reduction takes at most this many
+    steps.
+    """
+    ins = set(g.inputs())
+    return sum(1 for v in g.vertices() if g.type(v) == VertexType.Z and not is_leaf(g, v)
+               and not is_stem(g, v) and not _touches(g, v, ins))
+
+
 def _reduce_skeleton(g: BaseGraph[VT, ET], max_steps: int) -> None:
     steps = 0
     while True:
@@ -201,8 +218,9 @@ def _reduce_skeleton(g: BaseGraph[VT, ET], max_steps: int) -> None:
         g.remove_isolated_vertices()
         steps += 1
         if steps > max_steps:
-            raise RuntimeError("to_gpf: skeleton reduction did not terminate within {} "
-                               "bialgebra steps".format(max_steps))
+            raise RuntimeError("to_gpf: the skeleton reduction took more than {} bialgebra steps, which "
+                               "the termination bound rules out; this is a bug, please report the input "
+                               "diagram".format(max_steps))
 
 
 def _find_bialgebra_pair(g: BaseGraph[VT, ET]) -> tuple[VT, VT] | None:
