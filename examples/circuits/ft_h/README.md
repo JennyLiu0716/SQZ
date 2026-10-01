@@ -20,6 +20,18 @@ Circuit stages of thesis case study 1 (§4.6), on 19 qubits:
 | `ft_h_5.qasm` | Z checks (code 1 again, written in the rotated frame) |
 | `ft_h_5.2.qasm` | X checks |
 | `ft_h_6.qasm` | Z checks, then decode: copy Z_L onto `q[18]` and measure all data in the X basis |
+| `ft_h_3.2_n_order.qasm` | `ft_h_3.2.qasm` with the CNOTs of `q[15]` and `q[16]` in N order (not in the thesis) |
+| `ft_h_5_n_order.qasm` | `ft_h_5.qasm` with the CNOTs of `q[15]` and `q[16]` in N order (not in the thesis) |
+
+**CNOT order.** Every weight-4 check of the thesis's files runs its CNOTs on the
+top-left, top-right, bottom-left, bottom-right data qubit, so a fault on its
+ancilla after the second CNOT spreads onto a horizontal pair. That lines up with
+the logical X of code 2 in `ft_h_3.2.qasm` and with the logical Z of code 1 in
+`ft_h_5.qasm`, and the protocol has circuit distance 2 although every code has
+distance 3. The two `_n_order` files use top-left, bottom-left, top-right,
+bottom-right instead (a vertical pair); with both, the circuit distance is 3,
+and the noiseless program is the same (`CircuitDistance.ipynb`;
+`build_program(cnot_order='N')` in `interactive_fold_h_3d.py`).
 
 The files do not re-prepare ancillas after measuring them (the `// reset` lines
 are commented out); `FoldTransversalHadamard.ipynb` adds the `reset` (and `h`

@@ -13,6 +13,7 @@ blocks until it is closed):
     python examples/interactive_fold_h_3d.py --block 2 2     # one block only: block 2 of level 2 (the QEC round of code 2)
     python examples/interactive_fold_h_3d.py --phases        # label the spiders with their phases (outcome variables)
     python examples/interactive_fold_h_3d.py --miswired      # the thesis files' wiring error (ComparingPrograms.ipynb)
+    python examples/interactive_fold_h_3d.py --n-order       # CNOTs of stages 3 and 5 in N order (CircuitDistance.ipynb)
     python examples/interactive_fold_h_3d.py --save fig.png  # write the figure to a file instead of opening a window
 
 Mouse controls (matplotlib's standard 3D navigation):
@@ -92,22 +93,28 @@ def build_topology() -> Topology:
     return topo
 
 
-def build_program(miswired: bool = False) -> QProgram:
+def build_program(miswired: bool = False, cnot_order: str = "thesis") -> QProgram:
     """The protocol as in the notebook, plus two levels grouping the stages into the protocol's phases.
 
     ``miswired`` puts back the wiring error of the thesis's circuit files: one Z check of the round
     after the rotation on data qubit 2 instead of 4 (``ComparingPrograms.ipynb``, Part 2).
+    ``cnot_order="N"`` takes the X checks of code 2 and the Z checks after the rotation from the
+    ``*_n_order.qasm`` files, whose weight-4 checks run their CNOTs in N order; the noiseless program
+    is the same, the circuit distance rises from 2 to 3 (``CircuitDistance.ipynb``).
     """
-    ft_h_5 = load("ft_h_5")
+    if cnot_order not in ("thesis", "N"):
+        raise ValueError("cnot_order must be 'thesis' or 'N'")
+    suffix = "_n_order" if cnot_order == "N" else ""
+    ft_h_5 = load("ft_h_5" + suffix)
     if miswired:
-        with open(os.path.join(CIRCUITS, "ft_h_5.qasm")) as f:
+        with open(os.path.join(CIRCUITS, "ft_h_5" + suffix + ".qasm")) as f:
             ft_h_5 = zx.Circuit.from_qasm(f.read().replace("cx q[4], q[14];", "cx q[2], q[14];", 1))
     p = QProgram(N, bits=BITS, topology=build_topology(),
                  initial_states={**{q: '0' for q in range(1, 10)}, 18: '0', **{a: '+' for a in X_ANC + Z_ANC}})
     p.add_circuit(load("ft_h"), name="encode + X checks")
     p.add_circuit(load("ft_h_2"), name="transversal H")
     p.add_circuit(with_prefix(load("ft_h_3"), [Reset(a) for a in X_ANC]), name="Z checks (code 2)")
-    p.add_circuit(load("ft_h_3.2"), name="X checks (code 2)")
+    p.add_circuit(load("ft_h_3.2" + suffix), name="X checks (code 2)")
     p.add_permutation([0, 3, 6, 9, 2, 5, 8, 1, 4, 7] + list(range(10, 19)), name="rotate 90°")
     p.add_circuit(with_prefix(ft_h_5, [Reset(a) for a in Z_ANC]), name="Z checks", physical=True)
     p.add_circuit(with_prefix(load("ft_h_5.2"), [g for a in X_ANC for g in (Reset(a), HAD(a))]), name="X checks", physical=True)
@@ -129,13 +136,14 @@ def main() -> None:
     ap.add_argument("--block", type=int, nargs=2, metavar=("LEVEL", "I"), help="draw only the sub-diagram of block I of LEVEL")
     ap.add_argument("--phases", action="store_true", help="label the spiders with their phases")
     ap.add_argument("--miswired", action="store_true", help="the thesis files' wiring error in the round after the rotation")
+    ap.add_argument("--n-order", action="store_true", help="weight-4 checks of stages 3 and 5 with their CNOTs in N order")
     ap.add_argument("--save", metavar="FILE", help="save the figure to FILE instead of opening a window")
     args = ap.parse_args()
     if args.save is None and plt.get_backend().lower() == 'agg':
         sys.exit("matplotlib is using the non-interactive Agg backend; run this from a terminal "
                  "with a GUI backend (e.g. TkAgg, QtAgg), or pass --save FILE")
 
-    p = build_program(miswired=args.miswired)
+    p = build_program(miswired=args.miswired, cnot_order="N" if args.n_order else "thesis")
     for level in range(p.levels.num_levels):
         print("level {}:\n{}".format(level, p.describe_level(level)))
 

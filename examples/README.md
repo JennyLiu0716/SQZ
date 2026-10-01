@@ -90,7 +90,8 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
 - [CircuitDistance.ipynb](CircuitDistance.ipynb) — the circuit distance of Clifford stages
   (`circuit_distance`, with Stim and Mark Webster's `codedistance`; `pip install zxqec[distance]`).
   The fold-transversal H's rounds have circuit distance 2 although every code has distance 3, and
-  `explain()` names the two hook errors; the mis-wired ones have 1. Then the Z distance of
+  `explain()` names the two hook errors; the mis-wired ones have 1, and with the CNOTs of two check
+  rounds in N order (`build_program(cnot_order='N')`, same noiseless program) 3. Then the Z distance of
   cultivation through its `T` gates (`without_gates`): 3 at d = 3 and 4 at d = 5, with the four
   faults, and an independent check with Stim alone on the published d = 5 file with `T → S`.
 - [SteaneTInjection.ipynb](SteaneTInjection.ipynb) — a `T` gate injected into the [[7,1,3]] Steane

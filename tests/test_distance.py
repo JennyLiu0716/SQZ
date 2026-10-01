@@ -17,13 +17,13 @@ HERE = os.path.dirname(__file__)
 CULTIVATION = os.path.join(HERE, '..', 'examples', 'circuits', 'cultivation')
 
 
-def _fold_h(miswired):
+def _fold_h(miswired, cnot_order='thesis'):
     import sys
     sys.path.insert(0, os.path.join(HERE, '..', 'examples'))
     import matplotlib
     matplotlib.use('Agg')
     import interactive_fold_h_3d as fth
-    return fth.build_program(miswired=miswired)
+    return fth.build_program(miswired=miswired, cnot_order=cnot_order)
 
 
 def test_fold_transversal_h_rounds_have_circuit_distance_2_and_the_miswired_ones_1():
@@ -33,6 +33,18 @@ def test_fold_transversal_h_rounds_have_circuit_distance_2_and_the_miswired_ones
     correct = circuit_distance(_fold_h(False), 1, 6)
     assert correct.distance == 2 and set(correct.by_logical) == {('X', 'Z'), ('Z', 'X')}   # the logical H
     assert circuit_distance(_fold_h(True), 1, 6).distance == 1
+
+
+def test_n_order_in_two_check_stages_gives_the_fold_transversal_h_circuit_distance_3():
+    # the thesis's weight-4 checks put their last two CNOTs on a horizontal pair, so a fault half way spreads along
+    # code 2's logical X (stage 3, X checks) and code 1's logical Z (stage 5, Z checks); in N order the pair is
+    # vertical. The noiseless program is the same, and each change fixes its own round
+    from zxqec.qprogram import compare_programs
+    thesis, n_order = _fold_h(False), _fold_h(False, 'N')
+    assert compare_programs(thesis, n_order, 0).ok
+    assert circuit_distance(n_order, 1, 6).distance == 3
+    assert circuit_distance(n_order, 1, 3).distance == circuit_distance(n_order, 5, 6).distance == 3
+    assert circuit_distance(thesis, 1, 3).distance == circuit_distance(thesis, 5, 6).distance == 2
 
 
 def test_helpers_still_unused_at_the_cut_are_prepared_at_the_input_boundary():
