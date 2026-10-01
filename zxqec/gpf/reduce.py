@@ -40,7 +40,7 @@ from pyzx.utils import VertexType, is_pauli
 from .gadgets import simplify_gadgets
 from .hadamard import restore_boundary_hadamards
 from .matrix import apply_matrix, is_zero_phase, phase_mod2, reduce_rows, split_matrix
-from .normal_form import is_leaf, layout_gpf, to_gpf
+from .normal_form import is_leaf, is_stem, layout_gpf, to_gpf
 
 __all__ = ['GPFResult', 'reduce_gpf', 'equal_for_all_assignments', 'same_map', 'boolean_variables',
            'evaluate_phase', 'sample_consistent_assignment', 'consistent_assignments', 'constraint_system',
@@ -91,6 +91,14 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     gadgets follow (:func:`_expose_free_bits`), and parity checks left on such
     rows are solved for one of their bits (:func:`_resolve_checks`); then the
     loop continues.
+
+    Before each gadget step, an outcome that the constraints found so far fix
+    to a constant (one with the same value in every run that can occur) is
+    replaced by that constant in the phase of every gadget hub
+    (:func:`_fixed_outcomes_off_hubs`). A hub's parity of outcomes decides
+    whether its gadget acts as written or as its adjoint, so such an outcome,
+    say one that is always 0 and controls a fed-forward Pauli, would otherwise
+    keep gadgets that cancel apart. Other parities are left as they are.
     """
     h = to_gpf(g, isolate_paulis=isolate_paulis)
     constraints = _scalar_constraints(h)
@@ -107,8 +115,9 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
                 changed = True
             constraints += apply_matrix(h, m)
         constraints += _remove_isolated_pairs(h)
-        if not changed and gadgets and not isolate_paulis and simplify_gadgets(h):
-            changed = True
+        if not changed and gadgets and not isolate_paulis:
+            moved = _fixed_outcomes_off_hubs(h, constraints)
+            changed = simplify_gadgets(h) or moved
         if not changed and gadgets and not isolate_paulis:
             exposed = _expose_free_bits(h)
             if exposed is None:
@@ -126,6 +135,63 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     constraints = [phase_mod2(c) for c in constraints]
     constraints = [c for c in constraints if not is_zero_phase(c)]
     return GPFResult(h, constraints, unsatisfiable(constraints))
+
+
+def _fixed_outcomes_off_hubs(g: BaseGraph[VT, ET], constraints: Iterable[Any]) -> bool:
+    """Put the value of every outcome that ``constraints`` fix into the phases of the Z-gadget hubs.
+
+    An outcome is fixed if the linear span of the constraints contains ``c`` or
+    ``c + 1``. The constraints are factors already taken out of the diagram, so
+    the map is unchanged on every run they allow, which is where the reduced
+    diagram is defined (:func:`equal_for_all_assignments`). Returns whether a
+    phase changed.
+    """
+    polys = [c for c in constraints if isinstance(c, Poly)]
+    names = sorted({v.name for c in polys for v in c.free_vars()}, key=_variable_order)
+    rows: list[list[int]] = []
+    for c in polys:
+        try:
+            rows += _linear_rows([c], names)
+        except ValueError:
+            continue                        # not linear: no outcome is read off it
+    pivots = _echelon(rows, reversed(range(len(names))))
+    fixed = {names[col]: rows[k][-1] for k, col in enumerate(pivots) if sum(rows[k][:-1]) == 1}
+    if not fixed:
+        return False
+    changed = False
+    for v in list(g.vertices()):
+        phase = g.phase(v)
+        if g.type(v) != VertexType.X or not isinstance(phase, Poly) or not is_stem(g, v):
+            continue
+        new = _substitute_in_parity(phase, fixed)
+        if new is not None:
+            g.set_phase(v, new)
+            changed = True
+    return changed
+
+
+def _substitute_in_parity(phase: Poly, values: dict[str, int]) -> Any:
+    """``phase`` (a constant plus a parity of outcomes) with the outcomes in ``values`` replaced by their values.
+
+    The other terms keep their order. Returns ``None`` if ``phase`` has another
+    form or none of these outcomes.
+    """
+    kept, extra, hit = [], 0, False
+    for coeff, term in phase.terms:
+        if term.vars and (len(term.vars) != 1 or term.vars[0][1] != 1 or not term.vars[0][0].is_bool
+                          or Fraction(coeff).denominator != 1):
+            return None
+        if term.vars and term.vars[0][0].name in values:
+            extra += int(coeff) * values[term.vars[0][0].name]
+            hit = True
+        else:
+            kept.append((coeff, term))
+    if not hit:
+        return None
+    if not any(term.vars for _c, term in kept):
+        return phase_mod2(sum((Fraction(c) for c, _t in kept), Fraction(extra)))
+    new = Poly(kept)
+    return phase_mod2(new + 1) if extra % 2 else new
 
 
 def _expose_free_bits(g: BaseGraph[VT, ET]) -> list[Any] | None:

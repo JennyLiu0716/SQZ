@@ -389,6 +389,36 @@ def test_phases_modulo_returns_a_rewritten_copy():
     assert str(h.phase(z)) == 'c[1]' and str(g.phase(z)) == 'c[2]'
 
 
+def test_outcomes_fixed_by_the_constraints_leave_the_gadget_hubs():
+    # T on the parity y + c and T-dagger on y, where a spider with phase c makes c = 0 a constraint:
+    # in the only run that can occur the two cancel, and they must not survive as an S controlled by c
+    g = Graph()
+    c = new_var('c', True, g.var_registry)
+    i = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=0)
+    row = g.add_vertex(VertexType.Z, qubit=0, row=1)
+    o = g.add_vertex(VertexType.BOUNDARY, qubit=0, row=3)
+    g.add_edge((i, row)); g.add_edge((row, o))
+    for hub_phase, leaf_phase in ((c, Fraction(1, 4)), (0, Fraction(7, 4))):
+        hub = g.add_vertex(VertexType.X, qubit=1, row=1.5, phase=hub_phase)
+        leaf = g.add_vertex(VertexType.Z, qubit=1, row=2, phase=leaf_phase)
+        g.add_edge((row, hub)); g.add_edge((hub, leaf))
+    g.add_vertex(VertexType.Z, qubit=2, row=1, phase=c)
+    g.set_inputs((i,)); g.set_outputs((o,))
+    res = reduce_gpf(g)
+    assert [str(x) for x in res.constraints] == ['c']
+    assert not any(is_leaf(res.graph, v) for v in res.graph.vertices())
+    assert equal_for_all_assignments(g, res.graph, ['c'], res.constraints)
+
+
+def test_only_fixed_outcomes_are_substituted_in_a_hub_parity():
+    from zxqec.gpf.reduce import _substitute_in_parity
+    v = _outcomes(['c[1]', 'c[2]', 'c[3]'])
+    assert str(_substitute_in_parity(v['c[3]'] + v['c[1]'] + v['c[2]'], {'c[1]': 0})) == 'c[3] + c[2]'
+    assert _substitute_in_parity(v['c[3]'] + v['c[1]'], {'c[1]': 1, 'c[3]': 1}) == 0
+    assert _substitute_in_parity(v['c[2]'] + v['c[3]'], {'c[1]': 1}) is None          # nothing to substitute
+    assert _substitute_in_parity(v['c[1]'] * v['c[2]'], {'c[1]': 0}) is None          # not a parity
+
+
 def _two_bit_state(t_on_first=True):
     # sum over a, b of |a, b, a + b>, with T on qubit 0 when asked
     c = Circuit(3)
