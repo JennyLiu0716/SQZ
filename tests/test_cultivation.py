@@ -195,3 +195,50 @@ def test_every_block_grouped_as_in_the_paper_stays_in_its_code(program):
     s = p.summary(p.group_stages(GROUPS))
     assert all(b.action.stays_in_code() is True for b in s.blocks)
     assert p.logical_action().stays_in_code() is True
+
+
+def test_step_4_on_the_triangle_of_the_steane_code(program):
+    # Part 4 of examples/Cultivation.ipynb (in 3D) and Appendix E of the paper: of the 7! orderings of the
+    # code qubits onto the textbook triangle, six put the Z-spiders wired to four qubits on the three faces;
+    # with the first, step 4 in the run where every outcome is 0 is T-dagger|+> in the textbook Steane code
+    # built from the triangle alone, whichever weight-3 logical X its logical spider is wired to
+    import itertools
+    from fractions import Fraction
+    import pyzx as zx
+    from pyzx.graph import Graph
+    from pyzx.utils import VertexType
+    from zxqec.gpf import boolean_variables, change_variables
+    faces = [(0, 3, 4, 5), (1, 3, 4, 6), (2, 5, 4, 6)]
+    p, _circ = program
+    g = p.quantum_graph()
+    res = reduce_gpf(g)
+    code = p.code_at(p.num_stages - 1).data()
+    step4 = change_variables(res.graph, [list(code.logical_x[0].x)] + [list(r) for r in code.sx])
+    outs = [next(iter(step4.neighbors(b))) for b in step4.outputs()]
+    wired = [frozenset(j for j, w in enumerate(outs) if step4.connected(z, w))
+             for z in step4.vertices() if step4.type(z) == VertexType.Z]
+    orderings = [perm for perm in itertools.permutations(range(7))          # output j -> triangle qubit perm[j]
+                 if {frozenset(perm[j] for j in w) for w in wired if len(w) == 4} == {frozenset(f) for f in faces}]
+    assert len(orderings) == 6
+    output_of = {q: j for j, q in enumerate(orderings[0])}
+
+    def textbook(side):
+        t = Graph()
+        xs, bs = [], []
+        for j in range(7):
+            xs.append(t.add_vertex(VertexType.X))
+            bs.append(t.add_vertex(VertexType.BOUNDARY))
+            t.add_edge((xs[j], bs[j]))
+        for spider_qubits, phase in [(side, Fraction(7, 4))] + [(f, 0) for f in faces]:
+            z = t.add_vertex(VertexType.Z, phase=phase)
+            for q in spider_qubits:
+                t.add_edge((z, xs[output_of[q]]))
+        t.set_inputs(())
+        t.set_outputs(tuple(bs))
+        return t
+
+    variables = set(boolean_variables(g)) | {str(v) for c in res.constraints for v in c.free_vars()}
+    zero = step4.substitute_variables({n: 0 for n in variables})
+    sides = [s for s in itertools.combinations(range(7), 3) if all(len(set(s) & set(f)) % 2 == 0 for f in faces)]
+    assert len(sides) == 7
+    assert all(zx.compare_tensors(zero, textbook(s), preserve_scalar=False) for s in sides)
