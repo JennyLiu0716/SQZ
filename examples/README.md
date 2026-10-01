@@ -38,6 +38,12 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   form, one T† gadget, and T†|+⟩ fed into the encoder of the colour code), and checks every picture against the circuit by tensor contraction in all 32 runs the
   detectors allow; the pictures come from [zx_steps.py](zx_steps.py). Every claim is then checked
   with an independent state-vector simulation.
+- [interactive_cultivation_3d.py](interactive_cultivation_3d.py) — step 4 of that reduction in an
+  interactive window, drawn with `draw_graph_3d` on three planes: the non-Clifford state T†|+⟩, the
+  Z-layer, and the seven output X-spiders on the textbook triangle of the Steane code (given as a
+  `Topology`): `python examples/interactive_cultivation_3d.py [top|front|side]`, `--outcomes` to keep
+  the outcome variables in the phases (default: the run where every outcome is 0), `--save FILE` to
+  write the figure instead of opening a window.
 - [StabilizerCodes.ipynb](StabilizerCodes.ipynb) — the three questions for codes that are not CSS. The
   [[5,1,3]] code read off a ring of `CZ` gates (its stabilizers mix `X` and `Z`); its ideal encoder, built
   from the Choi state following Yeh et al., checked with numpy against its definition; a program that
