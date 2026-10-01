@@ -40,7 +40,17 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   layout of a normal form (`layout_gpf`), with the phases written modulo the detectors
   (`phases_modulo`); the change of variables is `change_variables`. The last of them is also drawn in
   3D (`draw_graph_3d`) on the triangle of the Steane code, next to T†|+⟩ in the textbook Steane code.
-  Every claim is then checked with an independent state-vector simulation.
+  Every claim is then checked with an independent state-vector simulation. Part 6 asks the same
+  questions of d = 5 cultivation with real T gates (42 qubits, from `haoliri0/SOFT`, Apache-2.0): the
+  [[19,1,5]] code after the growth and after the d = 5 double-check, all 89 declared detectors and no
+  others, T†|+⟩ prepared in every run, and the 53 T-type gadgets, written in the code's variables
+  modulo the detectors, adding up to one T† gadget on the logical variable. The authors' own final check
+  (`circuits/cultivation/d5_final_check.stim`, read after the protocol, with `MPP`) passes: its 18
+  detectors and the observable are deterministic. As at d = 3, the result is
+  drawn in 3D: in the variables of the faces that the final check measures, the reduced diagram is T†|+⟩ fed into the colour code of those faces, the same in every
+  run, drawn on the file's own qubit coordinates next to that state built from the faces alone. Both are
+  compared by tensor contraction, and so is the whole circuit, run by run, in 4 of its 1024 allowed runs.
+  There is no simulation check at 42 qubits.
 - [CultivationDoubleCheck.ipynb](CultivationDoubleCheck.ipynb) — only the double-check of that
   circuit, cut out of the program (`block_graph`) and reduced: T† gadgets on the seven inputs, T
   gadgets on the seven outputs, the block's six detectors, and a check that it measures
@@ -52,6 +62,12 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   `Topology`): `python examples/interactive_cultivation_3d.py [top|front|side]`, `--outcomes` to keep
   the outcome variables in the phases (default: the run where every outcome is 0), `--save FILE` to
   write the figure instead of opening a window.
+- [interactive_cultivation_d5_3d.py](interactive_cultivation_d5_3d.py) — the same for d = 5 (Part 6 of
+  `Cultivation.ipynb`): the reduced circuit in the variables of the faces that the authors' final
+  check measures, on three planes over the 19 code qubits at the coordinates of the circuit file:
+  `python examples/interactive_cultivation_d5_3d.py [top|front|side]`, `--textbook` for T†|+⟩ in the
+  colour code built from the faces alone, `--save FILE` to write the figure. The paper's d = 5 figure
+  calls its functions.
 - [StabilizerCodes.ipynb](StabilizerCodes.ipynb) — the three questions for codes that are not CSS. The
   [[5,1,3]] code read off a ring of `CZ` gates (its stabilizers mix `X` and `Z`); its ideal encoder, built
   from the Choi state following Yeh et al., checked with numpy against its definition; a program that

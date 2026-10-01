@@ -1,7 +1,11 @@
 """Magic-state cultivation (d = 3), from the circuit of Wan, Zhong and Zapirain in Stim's format.
 
 The claims of the tool are checked against the detectors the authors wrote by hand and against an
-independent state-vector simulation of the same circuit.
+independent state-vector simulation of the same circuit. The last tests run d = 5 cultivation with real
+T gates (42 qubits, from haoliri0/SOFT): there the claims are checked against the declared detectors, the
+authors' own final check (detectors and observable), and T-dag|+> in the colour code of the faces of that
+check, by tensor contraction of the reduced diagram and of the whole circuit in one run (no simulation at
+42 qubits).
 """
 import os
 
@@ -303,3 +307,156 @@ def test_the_double_check_on_its_own(program):
         expected = reduce(np.kron, [z if (q == 6 and c24) else i2 for q in qubits]) @ (np.eye(2 ** 7) + (-1) ** c24 * hxy)
         block = zx.tensor_to_matrix(zx.tensorfy(g.substitute_variables(a), preserve_scalar=False), 7, 7)
         assert zx.compare_tensors(block, expected, preserve_scalar=False)
+
+
+# -- d = 5 with real T gates (Part 6 of examples/Cultivation.ipynb) ---------------------------------
+
+PATH_D5 = os.path.join(os.path.dirname(__file__), '..', 'examples', 'circuits', 'cultivation', 'd5_cultivation.stim')
+
+
+@pytest.fixture(scope='module')
+def program_d5():
+    with open(PATH_D5) as f:
+        return program_from_stim(f.read())
+
+
+def test_d5_codes_detectors_and_logical_state(program_d5):
+    from zxqec.qprogram import check_detectors
+    p, circ = program_d5
+    assert (circ.qubits, circ.measurements, len(circ.detectors), p.num_stages) == (42, 93, 89, 8)
+    codes = [[(b.parameters, b.non_clifford) for b in p.code_at(s).blocks()] for s in range(p.num_stages)]
+    assert codes[0] == codes[2][:1] == [((7, 1, 3), True)]
+    assert [k for (_n, k, _d), _nc in codes[2][1:]] == [0] * 6                  # six pairs for the growth
+    assert all(codes[s] == [((19, 1, 5), True)] for s in (3, 4, 5, 7))
+    chk = check_detectors(p, circ.detectors)
+    assert chk.count('deterministic') == 89 and chk.derived == 89 and not chk.undeclared
+    assert all(d.value == 0 for d in chk.declared)
+    act = p.logical_action()
+    assert act.is_deterministic() and act.operations() == {'prepares T^dag|+>'}
+    assert {b.correction for b in act.branches()} == {''}
+
+
+def test_d5_gadgets_in_the_codes_variables_are_one_t_dagger_on_the_logical(program_d5):
+    # the growth feeds X corrections forward from c[21], c[23], c[25], which the detectors fix to 0; written
+    # modulo the detectors and in the code's variables, the 53 T-type gadgets add up to 7pi/4 on L alone, and
+    # the phases of the hidden variables are the detectors that need the T gates
+    from fractions import Fraction
+    from pyzx.utils import VertexType
+    from zxqec.gpf import change_variables, phase_polynomial, phases_modulo
+    p, circ = program_d5
+    res = reduce_gpf(p.quantum_graph(), gadgets=False)
+    assert {'c[21]', 'c[23]', 'c[25]'} <= {str(c) for c in res.constraints}
+    code = p.code_at(p.num_stages - 1).data()
+    rows = [list(code.logical_x[0].x)] + [list(r) for r in code.sx]
+    m = change_variables(phases_modulo(res.graph, res.constraints), rows, fuse=False)
+    zs = sorted(v for v in m.vertices() if m.type(v) == VertexType.Z and not is_leaf(m, v))
+    poly, gadgets = phase_polynomial(m)
+    assert len(gadgets) == 53 and len(zs) == 23
+    assert {mono: c % 2 for mono, c in poly.items() if c % 2} == {frozenset([('z', zs[0])]): Fraction(7, 4)}
+    names = ['c[{}]'.format(i) for i in range(circ.measurements)]
+    on_outcomes = [d for d in res.detectors if all(str(v).startswith('c[') for v in d.free_vars())]
+    ours = np.concatenate([_span(on_outcomes, names), _span([m.phase(z) for z in zs[len(rows):]], names)], 0)
+    theirs = _span(circ.detectors, names)
+    assert rank(_span(on_outcomes, names)) == 76
+    assert rank(ours) == rank(theirs) == rank(np.concatenate([ours, theirs], 0)) == 89
+
+
+# the faces that the first MPP of the authors' final check (d5_final_check.stim) measures
+FACES5 = [[0, 3, 7, 11], [9, 13, 15, 19, 21, 27], [17, 25, 32, 36], [3, 7, 9, 13], [15, 21, 23, 29],
+          [19, 25, 27, 32, 34, 38], [7, 11, 13, 17, 19, 25], [21, 27, 29, 34], [32, 36, 38, 40]]
+SIDE5 = [0, 3, 9, 15, 23]
+PATH_D5_CHECK = os.path.join(os.path.dirname(PATH_D5), 'd5_final_check.stim')
+
+
+def test_d5_passes_the_authors_final_check():
+    # the published file is the protocol followed by the final check: the 18 stabilizers measured by MPP, a DETECTOR
+    # for each, then T gates and the product of Y, which ends OBSERVABLE_INCLUDE(0); all of it is deterministic
+    from zxqec.qprogram import check_detectors
+    with open(PATH_D5) as f, open(PATH_D5_CHECK) as g:
+        p, circ = program_from_stim(f.read() + g.read())
+    assert (circ.measurements, len(circ.detectors), len(circ.observables[0])) == (112, 107, 11)
+    first_mpp = next(ins for ins in circ.instructions if ins.name == 'MPP')
+    for letter in 'XZ':
+        assert (sorted(sorted(int(f[1:]) for f in t.split('*')) for t in first_mpp.targets if t[0] == letter)
+                == sorted(map(sorted, FACES5)))
+    chk = check_detectors(p, circ.detectors)
+    assert chk.count('deterministic') == 107 and all(d.value == 0 for d in chk.declared)
+    assert chk.undeclared == ['c[111] = 0']                     # the final product of Y, 0 on its own
+    (obs,) = check_detectors(p, [circ.observables[0]]).declared
+    assert obs.status == 'deterministic' and obs.value == 0
+
+
+def test_d5_is_t_dagger_in_the_colour_code_of_the_authors_final_check(program_d5):
+    # Part 6, 'The result in 3D': the code is the colour code of the faces; in the faces' variables the reduced
+    # diagram is T-dag|+> into that code with no outcome left; and the whole circuit equals that state in the run
+    # where every outcome is 0 (tensor contraction), while T|+> does not
+    from fractions import Fraction
+    from pyzx.graph import Graph
+    from pyzx.utils import VertexType
+    from zxqec.codes import PauliString
+    from zxqec.gpf import (boolean_variables, change_variables, phases_modulo, same_map, simplify_gadgets)
+    p, _circ = program_d5
+    code = p.code_at(p.num_stages - 1).data()
+    qubits = [int(q) for q in code.qubits]
+    on = lambda support: [int(q in support) for q in qubits]
+    faces = ([PauliString.from_arrays(on(f), [0] * 19) for f in FACES5]
+             + [PauliString.from_arrays([0] * 19, on(f)) for f in FACES5])
+    assert all(code.contains(s) for s in faces) and len(code.stabilizers) == 18
+    assert rank(np.array([s.symplectic for s in faces], dtype=np.uint8)) == 18
+    assert on(SIDE5) == [int(b) for b in code.logical_x[0].x]
+
+    g = p.quantum_graph()
+    res = reduce_gpf(g)
+    rows = [on(SIDE5)] + [on(f) for f in FACES5]
+    m = change_variables(res.graph, rows, fuse=False)
+    while simplify_gadgets(m):
+        pass
+    m = phases_modulo(change_variables(m, rows), res.constraints)
+    assert not any(is_leaf(m, v) for v in m.vertices())
+    assert not any(getattr(m.phase(v), 'free_vars', lambda: [])() for v in m.vertices())
+    xs = [next(iter(m.neighbors(b))) for b in m.outputs()]
+    wiring = sorted((str(m.phase(z)), tuple(q for q, x in zip(qubits, xs) if m.connected(z, x)))
+                    for z in m.vertices() if m.type(z) == VertexType.Z)
+    assert wiring == sorted([('7/4', tuple(SIDE5))] + [('0', tuple(sorted(f, key=qubits.index))) for f in FACES5])
+
+    def textbook(angle):
+        t = Graph()
+        xv, bs = [], []
+        for _q in qubits:
+            xv.append(t.add_vertex(VertexType.X))
+            bs.append(t.add_vertex(VertexType.BOUNDARY))
+            t.add_edge((xv[-1], bs[-1]))
+        for support in FACES5 + [SIDE5]:
+            s = t.add_vertex(VertexType.Z)
+            for q in support:
+                t.add_edge((s, xv[qubits.index(q)]))
+        t.add_edge((t.add_vertex(VertexType.Z, phase=angle), s))
+        t.set_inputs(())
+        t.set_outputs(tuple(bs))
+        return t
+
+    zero = {n: 0 for n in set(boolean_variables(g)) | {str(v) for c in res.constraints for v in c.free_vars()}}
+    assert all(evaluate_phase(c, zero) == 0 for c in res.constraints)
+    assert same_map(m.substitute_variables(zero), textbook(Fraction(7, 4)))
+    circuit = g.substitute_variables(zero)
+    assert same_map(circuit, textbook(Fraction(7, 4)))
+    assert not same_map(circuit, textbook(Fraction(1, 4)))
+
+
+GROUPS_D5 = [(0, 0, 'inject T', 'injection'), (1, 2, 'double-check d=3', 'cultivation'), (3, 3, 'grow', None),
+             (4, 5, 'checks', 'syndrome extraction'), (6, 7, 'double-check d=5', 'cultivation')]
+
+
+def test_d5_double_check_block_is_a_logical_measurement(program_d5):
+    # as a block, the d = 5 double-check is a measurement in {T-dag|+>, T-dag|->} split by its own outcome
+    # c[73] alone: outcomes measured before it that the program's detectors fix (c[21], which appears in a
+    # sign of the code before it, c[65], c[70]) are read as their values, and no parity is counted twice
+    p, _circ = program_d5
+    s = p.summary(p.group_stages(GROUPS_D5))
+    block = s.blocks[4]
+    assert block.ok and block.action.measured_basis() == ('T^dag|+>', 'T^dag|->')
+    assert sorted(br.conditions for br in block.action.branches()) == [[('c[73]', 0)], [('c[73]', 1)]]
+    assert [b.ok for b in s.blocks] == [True, False, True, True, True]
+    # the d = 3 double-check ends in the stage that also prepares the six pairs of the growth, so the code
+    # after the block is not the code before it; its other two checks pass
+    assert [ok for ok, _why in s.blocks[1].checks] == [False, True, True]

@@ -1,0 +1,35 @@
+# The noiseless final check of d = 5 cultivation with real T gates.
+#
+# Lines 466-490 of legacy/softv1/magic_state_cultivation/circuits/circuit_d5_p0.001.stim in
+#   https://github.com/haoliri0/SOFT
+# (Apache License 2.0), unchanged. It continues d5_cultivation.stim (lines 1-465 of the same file), and its
+# rec[-k] refer to measurements of the protocol, so it is read after it: the two files together are the
+# published file. It measures the 18 stabilizers of the d = 5 colour code as products of Paulis (MPP), with
+# a DETECTOR for each, then applies a layer of T and T_DAG gates, measures the product of Y on the 19 code
+# qubits, and adds that result to OBSERVABLE_INCLUDE(0). The authors wrote it to check the output state in
+# simulation; it is not part of the protocol.
+MPP X0*X3*X7*X11 X9*X13*X15*X19*X21*X27 X17*X25*X32*X36 Z0*Z3*Z7*Z11 Z9*Z13*Z15*Z19*Z21*Z27 Z17*Z25*Z32*Z36 X3*X7*X9*X13 X15*X21*X23*X29 X19*X25*X27*X32*X34*X38 Z3*Z7*Z9*Z13 Z15*Z21*Z23*Z29 Z19*Z25*Z27*Z32*Z34*Z38 X7*X11*X13*X17*X19*X25 X21*X27*X29*X34 X32*X36*X38*X40 Z7*Z11*Z13*Z17*Z19*Z25 Z21*Z27*Z29*Z34 Z32*Z36*Z38*Z40
+
+DETECTOR(0.625, 0.125, 0, -1, -9) rec[-39] rec[-18]
+DETECTOR(0.875, 0.125, 0, -1, -9) rec[-49] rec[-48] rec[-15]
+DETECTOR(1.25, 1.4375, 0, -1, -9) rec[-40] rec[-12]
+DETECTOR(1.5, 1.4375, 0, -1, -9) rec[-48] rec[-9]
+DETECTOR(2.625, 1, 0, -1, -9) rec[-41] rec[-38] rec[-6]
+DETECTOR(2.875, 1, 0, -1, -9) rec[-51] rec[-3]
+DETECTOR(2.625, 3, 0, -1, -9) rec[-42] rec[-17]
+DETECTOR(2.875, 3, 0, -1, -9) rec[-52] rec[-50] rec[-14]
+DETECTOR(3.25, 4.4375, 0, -1, -9) rec[-43] rec[-11]
+DETECTOR(3.5, 4.4375, 0, -1, -9) rec[-51] rec[-8]
+DETECTOR(4.625, 0.125, 0, -1, -9) rec[-44] rec[-38] rec[-16]
+DETECTOR(4.875, 0.125, 0, -1, -9) rec[-54] rec[-53] rec[-13]
+DETECTOR(4.625, 2, 0, -1, -9) rec[-45] rec[-38] rec[-10]
+DETECTOR(4.875, 2, 0, -1, -9) rec[-55] rec[-53] rec[-7]
+DETECTOR(4.5, 3.9375, 0, -1, -9) rec[-46] rec[-5]
+DETECTOR(4.75, 3.9375, 0, -1, -9) rec[-54] rec[-2]
+DETECTOR(6.5, 0.9375, 0, -1, -9) rec[-47] rec[-4]
+DETECTOR(6.75, 0.9375, 0, -1, -9) rec[-1]
+
+T_DAG 0 11 17 19 36 40
+T 3 7 9 13 15 21 23 25 27 29 32 34 38
+MPP Y0*Y3*Y7*Y9*Y11*Y13*Y15*Y17*Y19*Y21*Y23*Y25*Y27*Y29*Y32*Y34*Y36*Y38*Y40 
+OBSERVABLE_INCLUDE(0) rec[-1]
