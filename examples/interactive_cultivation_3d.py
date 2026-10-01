@@ -57,12 +57,11 @@ import matplotlib.pyplot as plt
 
 from pyzx.spacetime import set_timestep
 from pyzx.utils import VertexType
-from zxqec.gpf import boolean_variables, reduce_gpf
+from zxqec.gpf import boolean_variables, change_variables, reduce_gpf, reduce_modulo
 from zxqec.qprogram import program_from_stim
 from zxqec.spacetime import VIEWS, Topology, draw_graph_3d
 
 from teaching_figures import FACES, POS
-from zx_steps import encoder_form, phase_label
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CIRCUIT = os.path.join(HERE, "circuits", "cultivation", "d3_cultivation.stim")
@@ -78,7 +77,7 @@ def build_step4():
     res = reduce_gpf(g)
     code = p.code_at(p.num_stages - 1).data()
     rows = [list(code.logical_x[0].x)] + [list(r) for r in code.sx]
-    return g, res, code, encoder_form(res.graph, rows)
+    return g, res, code, change_variables(res.graph, rows)
 
 
 def build_topology() -> Topology:
@@ -150,8 +149,8 @@ def main() -> None:
     out_x = [next(iter(step4.neighbors(b))) for b in step4.outputs()]
     for z in sorted(v for v in step4.vertices() if step4.type(v) == VertexType.Z):
         wired = [q for j, q in enumerate(code.qubits) if step4.connected(z, out_x[j])]
-        print("  Z-spider {:28s} circuit qubits {:16s} triangle qubits {}".format(
-            phase_label(step4.phase(z), res.constraints), str(wired), sorted(on[q] for q in wired)))
+        print("  Z-spider {:42s} circuit qubits {:16s} triangle qubits {}".format(
+            str(reduce_modulo(step4.phase(z), res.constraints)), str(wired), sorted(on[q] for q in wired)))
 
     shown = on_planes(step4, code, on)
     if not args.outcomes:

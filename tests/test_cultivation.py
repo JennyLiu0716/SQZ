@@ -129,44 +129,52 @@ def test_each_drawn_step_equals_the_circuit_and_ends_at_the_expected_diagram(pro
     # Part 4 of examples/Cultivation.ipynb: every picture is checked against the circuit diagram
     # by tensor contraction, in every run the detectors allow, and the last one is the expected
     # diagram (T-dagger|+> into the encoder of the code, with the Z correction) spider for spider
-    import sys
     from fractions import Fraction
-    import pyzx as zx
-    from zxqec.gpf import boolean_variables, restore_boundary_hadamards, to_gpf
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'examples'))
-    from zx_steps import allowed_runs, encoded_state, encoder_form, layer_rows, output_phases
+    from pyzx.symbolic import new_var
+    from pyzx.utils import VertexType
+    from zxqec.gpf import (boolean_variables, change_variables, consistent_assignments, equal_for_all_assignments,
+                           phases_modulo, restore_boundary_hadamards, to_gpf)
     p, _circ = program
     g = p.quantum_graph()
     res = reduce_gpf(g)
     names = sorted(set(boolean_variables(g)) | {str(v) for c in res.constraints for v in c.free_vars()})
-    runs = allowed_runs(res.constraints, names)
-    assert len(runs) == 32
+    assert len(consistent_assignments(res.constraints, names)) == 32
     code = p.code_at(p.num_stages - 1).data()
     steps = [restore_boundary_hadamards(to_gpf(g)), res.to_graph(),
-             encoder_form(res.graph, [list(code.logical_x[0].x)] + [list(r) for r in code.sx])]
-    expected = encoded_state(code, Fraction(7, 4), ['c[4]', 'c[5]', 'c[6]', 'c[7]', 'c[14]'])
+             change_variables(res.graph, [list(code.logical_x[0].x)] + [list(r) for r in code.sx])]
+    expected = code.encoder()
+    (b,) = list(expected.inputs())
+    (z,) = list(expected.neighbors(b))
+    expected.remove_vertex(b)
+    expected.set_inputs(())
+    phase = Fraction(7, 4)
+    for name in ['c[4]', 'c[5]', 'c[6]', 'c[7]', 'c[14]']:
+        phase = phase + new_var(name, True, expected.var_registry)
+    expected.set_phase(z, expected.phase(z) + phase)
     for h in steps + [expected]:
-        assert all(zx.compare_tensors(g.substitute_variables(a), h.substitute_variables(a), preserve_scalar=False)
-                   for a in runs)
-    assert layer_rows(steps[2], res.constraints) == layer_rows(expected, res.constraints)
-    assert output_phases(steps[2], res.constraints) == output_phases(expected, res.constraints)
+        assert equal_for_all_assignments(g, h, names, res.constraints)
+    # and step 4 and the expected diagram have the same spiders, edges and phases (Appendix E of the paper)
+    def wiring(h):
+        h = phases_modulo(h, res.constraints)
+        outs = [next(iter(h.neighbors(b))) for b in h.outputs()]
+        zs = [v for v in h.vertices() if h.type(v) == VertexType.Z and not is_leaf(h, v)]
+        return (sorted((str(h.phase(z)), tuple(int(h.connected(z, w)) for w in outs)) for z in zs),
+                [str(h.phase(w)) for w in outs])
+    assert wiring(steps[2]) == wiring(expected)
 
 
 def test_in_the_codes_variables_the_gadgets_have_lias_block_form(program):
     # Part 4, step 2 of examples/Cultivation.ipynb: in the variables L | S1 S2 S3 | h1 h2 the 7 T gates
     # read the code's columns (P_L P_S), the 7 T-dagger gates the same columns plus h1 + h2, and all 15
     # add up to one T-dagger gadget on L (H = (1)) plus Pauli terms in c[14]
-    import sys
     from fractions import Fraction
     from pyzx.utils import VertexType
-    from zxqec.gpf import phase_polynomial, to_gpf
+    from zxqec.gpf import change_variables, phase_polynomial, to_gpf
     from zxqec.gpf.gadgets import _xor_terms
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'examples'))
-    from zx_steps import encoder_form
     p, _circ = program
     code = p.code_at(p.num_stages - 1).data()
     rows = [list(code.logical_x[0].x)] + [list(r) for r in code.sx]
-    m = encoder_form(to_gpf(p.quantum_graph()), rows, fuse=False)
+    m = change_variables(to_gpf(p.quantum_graph()), rows, fuse=False)
     zs = sorted(v for v in m.vertices() if m.type(v) == VertexType.Z and not is_leaf(m, v))
     assert len(zs) == 6                                          # L, S1, S2, S3 and two hidden variables
     gadgets = []

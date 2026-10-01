@@ -49,9 +49,10 @@ from pyzx.graph.base import BaseGraph, VT, ET
 from pyzx.symbolic import Poly
 from pyzx.utils import VertexType, is_pauli
 
-from .normal_form import is_leaf, is_stem
+from .normal_form import is_leaf, is_stem, layout_gpf
 
-__all__ = ['SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'phase_mod2', 'is_zero_phase']
+__all__ = ['SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'change_variables', 'phase_mod2',
+           'is_zero_phase']
 
 
 def phase_mod2(p: Any) -> Any:
@@ -179,3 +180,67 @@ def apply_matrix(g: BaseGraph[VT, ET], m: SplitMatrix) -> list[Any]:
             g.add_edge((r, c))
         g.set_phase(r, m.phases[i])
     return constraints
+
+
+def change_variables(g: BaseGraph[VT, ET], rows: Any, fuse: bool = True) -> BaseGraph[VT, ET]:
+    """A clone of the state ``g`` in new summation variables, so that its Z-layer rows are ``rows``.
+
+    ``g`` is a state (no inputs) in generalized parity form whose Z-spiders carry
+    Pauli phases; ``rows`` are 0/1 vectors over the outputs spanning the same
+    space as the Z-layer rows (over the outputs). With ``A`` those rows and
+    ``T A = rows``, the old bits are ``y = y' T``: this is the row operation of
+    this module (:func:`split_matrix`, :func:`apply_matrix`) with the matrix
+    ``T``, applied to every column, so the Pauli phases become ``T s`` and a
+    gadget that read the parity ``l . y`` reads ``(T l) . y'``. The map is the
+    same; only the order of summation changes. If the Z-layer has more spiders
+    than ``rows``, the remaining new variables are *hidden*: their rows are zero
+    on the outputs (a basis of the combinations ``c`` with ``c A = 0``).
+
+    The Z-spiders keep their vertices: the ``i``-th of them in increasing order
+    gets ``rows[i]``, the hidden ones come last. With ``fuse``, every gadget left
+    reading a single spider, with a hub of phase 0, is fused into that spider by
+    PyZX's ``remove_id`` (the hub) and ``fuse`` (the leaf). The clone is laid out
+    by :func:`~zxqec.gpf.normal_form.layout_gpf`.
+    """
+    from pyzx.rewrite_rules import fuse as fuse_spiders, remove_id
+    from ..codes.gf2 import as_matrix, nullspace, rank, solve
+
+    if list(g.inputs()):
+        raise ValueError("change_variables takes a state (a diagram without inputs)")
+    h = g.clone()
+    m = split_matrix(h, VertexType.Z)
+    if not all(is_pauli(h.phase(r)) for r in m.rows):
+        raise ValueError("a Z-spider has a phase that is not Pauli")
+    cols = m.external + m.internal
+    out_cols = [cols.index(next(iter(h.neighbors(b)))) for b in h.outputs()]
+    k = len(m.rows)
+    old = as_matrix([[e[c] for c in out_cols] for e in m.entries], len(out_cols))
+    t = []
+    for r in as_matrix([list(r) for r in rows], len(out_cols)):
+        c = solve(old.T.copy(), r)
+        if c is None:
+            raise ValueError("row {} is not in the span of the Z-layer".format(list(r)))
+        t.append(list(c))
+    t += [list(c) for c in nullspace(old.T.copy())] if k else []
+    if len(t) != k or rank(as_matrix(t, k)) < k:
+        raise ValueError("the rows are not a basis of the span of the Z-layer")
+    entries = [[sum(t[i][j] * m.entries[j][c] for j in range(k)) % 2 for c in range(len(cols))] for i in range(k)]
+    phases = []
+    for i in range(k):
+        p: Any = 0
+        for j in range(k):
+            if t[i][j]:
+                p = p + m.phases[j]
+        phases.append(phase_mod2(p))
+    m.entries, m.phases = entries, phases
+    apply_matrix(h, m)
+    if fuse:
+        for leaf in [v for v in h.vertices() if is_leaf(h, v)]:
+            (hub,) = list(h.neighbors(leaf))
+            reads = [z for z in h.neighbors(hub) if z != leaf]
+            if len(reads) == 1 and h.type(reads[0]) == VertexType.Z and is_zero_phase(h.phase(hub)):
+                remove_id(h, hub)
+                fuse_spiders(h, reads[0], leaf)
+    h.rebind_variables_to_registry()
+    layout_gpf(h)
+    return h

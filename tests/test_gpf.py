@@ -331,3 +331,114 @@ def test_identity_removal_before_pushing_hadamards():
     g.set_inputs((i,)); g.set_outputs((o,))
     h = to_gpf(g)                                                # no longer raises
     assert is_gpf(h) and zx.compare_tensors(g, h, preserve_scalar=False)
+
+
+# -- runs, phases modulo the detectors, change of variables, layout ----------------------------------
+
+def _outcomes(names, g=None):
+    reg = g.var_registry if g is not None else None
+    return {n: new_var(n, True, reg) for n in names}
+
+
+def test_consistent_assignments_are_exactly_the_solutions():
+    import itertools
+    from zxqec.gpf import consistent_assignments, evaluate_phase
+    v = _outcomes(['a', 'b', 'c', 'd'])
+    constraints = [v['a'] + v['b'], v['b'] + v['c'] + 1]
+    names = ['a', 'b', 'c', 'd']
+    brute = [dict(zip(names, bits)) for bits in itertools.product([0, 1], repeat=4)
+             if not any(evaluate_phase(c, dict(zip(names, bits))) for c in constraints)]
+    found = consistent_assignments(constraints, names)
+    assert sorted(map(sorted, map(dict.items, found))) == sorted(map(sorted, map(dict.items, brute)))
+    assert len(found) == 4                                    # 4 variables, 2 independent constraints
+    assert consistent_assignments([v['a'], v['a'] + 1], names) == []          # inconsistent
+    assert consistent_assignments([v['a'] + v['d']], ['a']) == [{'a': 0}]     # d is not listed: it is 0
+    with pytest.raises(ValueError):
+        consistent_assignments([v['a'] * v['b']], names)
+
+
+def test_equal_for_all_assignments_only_visits_the_allowed_runs():
+    # 40 outcomes tied by 39 constraints: 2 runs, where trying every assignment would take 2^40
+    g = Graph()
+    names = ['c[{}]'.format(i) for i in range(40)]
+    v = _outcomes(names, g)
+    z = g.add_vertex(VertexType.Z, phase=sum((v[n] for n in names[1:]), v[names[0]]))
+    b = g.add_vertex(VertexType.BOUNDARY)
+    g.add_edge((z, b))
+    g.set_outputs((b,))
+    constraints = [v[names[i]] + v[names[i + 1]] for i in range(39)]
+    assert equal_for_all_assignments(g, g.copy(), names, constraints)
+
+
+def test_reduce_modulo_writes_a_parity_in_the_earliest_outcomes():
+    from zxqec.gpf import reduce_modulo
+    v = _outcomes(['c[1]', 'c[2]', 'c[3]'])
+    reduced = reduce_modulo(v['c[1]'] + v['c[3]'] + Fraction(9, 4), [v['c[3]'] + v['c[2]'] + 1])
+    assert str(reduced) == str(v['c[1]'] + v['c[2]'] + Fraction(5, 4))        # c3 = c2 + 1; 9/4 + 1 = 5/4 mod 2
+    assert reduce_modulo(v['c[3]'] + v['c[2]'], [v['c[3]'] + v['c[2]']]) == 0
+    product = v['c[1]'] * v['c[2]']
+    assert reduce_modulo(product, [v['c[1]']]) is product                    # not a parity: unchanged
+
+
+def test_phases_modulo_returns_a_rewritten_copy():
+    from zxqec.gpf import phases_modulo
+    g = Graph()
+    v = _outcomes(['c[1]', 'c[2]'], g)
+    z = g.add_vertex(VertexType.Z, phase=v['c[2]'])
+    h = phases_modulo(g, [v['c[2]'] + v['c[1]']])
+    assert str(h.phase(z)) == 'c[1]' and str(g.phase(z)) == 'c[2]'
+
+
+def _two_bit_state(t_on_first=True):
+    # sum over a, b of |a, b, a + b>, with T on qubit 0 when asked
+    c = Circuit(3)
+    if t_on_first:
+        c.add_gate(T(0))
+    c.add_gate(CNOT(0, 2))
+    c.add_gate(CNOT(1, 2))
+    g = c.to_graph()
+    g.apply_state('++0')
+    return g
+
+
+def test_change_variables_sets_the_rows_and_keeps_the_map():
+    from zxqec.gpf import change_variables
+    g = _two_bit_state(t_on_first=False)
+    d = to_gpf(g)
+    for rows in ([[1, 1, 0], [0, 1, 1]], [[1, 0, 1], [1, 1, 0]]):
+        h = change_variables(d, rows)
+        outs = [next(iter(h.neighbors(b))) for b in h.outputs()]
+        zs = sorted(v for v in h.vertices() if h.type(v) == VertexType.Z and not is_leaf(h, v))
+        assert [[int(h.connected(z, w)) for w in outs] for z in zs] == rows
+        assert same_map(h, g)
+    with pytest.raises(ValueError):
+        change_variables(d, [[1, 0, 0], [0, 1, 1]])               # [1, 0, 0] is not in the span
+
+
+def test_change_variables_fuses_a_gadget_that_reads_one_spider():
+    from zxqec.gpf import change_variables
+    g = _two_bit_state()                                          # T on the bit a
+    d = to_gpf(g)
+    assert sum(is_leaf(d, v) for v in d.vertices()) == 1
+    rows = [[1, 0, 1], [0, 1, 1]]                                 # a and b
+    kept = change_variables(d, rows, fuse=False)
+    fused = change_variables(d, rows)
+    assert sum(is_leaf(kept, v) for v in kept.vertices()) == 1
+    assert sum(is_leaf(fused, v) for v in fused.vertices()) == 0
+    assert any(fused.phase(v) == Fraction(1, 4) for v in fused.vertices() if fused.type(v) == VertexType.Z)
+    assert same_map(kept, g) and same_map(fused, g)
+
+
+def test_layout_gpf_puts_the_layers_side_by_side():
+    from zxqec.gpf import layout_gpf
+    d = to_gpf(_two_bit_state())
+    layout_gpf(d)
+    outs = list(d.outputs())
+    xs = [next(iter(d.neighbors(b))) for b in outs]
+    zs = [v for v in d.vertices() if d.type(v) == VertexType.Z and not is_leaf(d, v)]
+    assert [d.qubit(x) for x in xs] == [0, 1, 2]                  # output j on line j
+    assert all(d.row(z) == 1 for z in zs)
+    assert all(d.row(x) > 1 for x in xs) and all(d.row(b) == d.row(xs[0]) + 1 for b in outs)
+    for leaf in (v for v in d.vertices() if is_leaf(d, v)):
+        (hub,) = list(d.neighbors(leaf))
+        assert d.qubit(leaf) == d.qubit(hub) and d.row(leaf) > d.row(hub)

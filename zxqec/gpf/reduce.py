@@ -27,12 +27,14 @@ zero (the constraints have no solution over GF(2)).
 from __future__ import annotations
 
 import itertools
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any
 
 from pyzx.graph.base import BaseGraph, VT, ET
-from pyzx.symbolic import Poly
+from pyzx.symbolic import Poly, new_var
 from pyzx.utils import VertexType, is_pauli
 
 from .gadgets import simplify_gadgets
@@ -41,8 +43,8 @@ from .matrix import apply_matrix, is_zero_phase, phase_mod2, reduce_rows, split_
 from .normal_form import is_leaf, layout_gpf, to_gpf
 
 __all__ = ['GPFResult', 'reduce_gpf', 'equal_for_all_assignments', 'same_map', 'boolean_variables',
-           'evaluate_phase', 'sample_consistent_assignment', 'constraint_system', 'detector_rank',
-           'unsatisfiable']
+           'evaluate_phase', 'sample_consistent_assignment', 'consistent_assignments', 'constraint_system',
+           'detector_rank', 'unsatisfiable', 'reduce_modulo', 'phases_modulo']
 
 
 @dataclass
@@ -342,12 +344,18 @@ def equal_for_all_assignments(g: BaseGraph[VT, ET], h: BaseGraph[VT, ET],
     0) are skipped, since the reduced diagram is only defined on outcomes that
     can occur. ``variables`` defaults to all Boolean variables of both graphs.
     Assignments for which *both* diagrams are the zero map count as equal.
+    When the constraints are linear, only the assignments that satisfy them are
+    visited (:func:`consistent_assignments`); otherwise every assignment is tried.
     """
     names = list(variables) if variables is not None else boolean_variables(g, h)
-    for values in itertools.product([0, 1], repeat=len(names)):
-        subs = dict(zip(names, values))
-        if any(evaluate_phase(c, subs) for c in constraints):
-            continue
+    constraints = list(constraints)
+    try:
+        allowed: Iterable[dict[str, int]] = consistent_assignments(constraints, names)
+    except ValueError:                                   # a constraint that is not linear
+        allowed = (subs for subs in (dict(zip(names, values))
+                                     for values in itertools.product([0, 1], repeat=len(names)))
+                   if not any(evaluate_phase(c, subs) for c in constraints))
+    for subs in allowed:
         a = g.substitute_variables(subs) if names else g
         b = h.substitute_variables(subs) if names else h
         if not same_map(a, b, preserve_scalar=preserve_scalar):
@@ -436,3 +444,136 @@ def sample_consistent_assignment(constraints: Iterable[Any], variables: Sequence
         row = rows[k]
         values[col] = row[-1] ^ sum(values[j] for j in range(len(names)) if j != col and row[j]) % 2
     return dict(zip(names, values))
+
+
+def _linear_rows(constraints: Iterable[Any], names: Sequence[str]) -> list[list[int]]:
+    """The constraints as rows ``[A | b]`` over ``names``; a variable outside ``names`` is 0."""
+    index = {n: i for i, n in enumerate(names)}
+    rows: list[list[int]] = []
+    for c in constraints:
+        row = [0] * (len(names) + 1)
+        if isinstance(c, Poly):
+            for coeff, term in c.terms:
+                if int(coeff) % 2 == 0 or any(v.name not in index for v, _ in term.vars):
+                    continue
+                if not term.vars:
+                    row[-1] ^= 1
+                elif len(term.vars) == 1 and term.vars[0][1] == 1:
+                    row[index[term.vars[0][0].name]] ^= 1
+                else:
+                    raise ValueError("constraint {} is not linear".format(c))
+        elif int(c) % 2:
+            row[-1] = 1
+        rows.append(row)
+    return rows
+
+
+def _echelon(rows: list[list[int]], order: Sequence[int]) -> list[int]:
+    """Reduced row echelon form over GF(2) (in place), pivots taken in ``order``; returns the pivot columns."""
+    pivots: list[int] = []
+    r = 0
+    for col in order:
+        piv = next((i for i in range(r, len(rows)) if rows[i][col]), None)
+        if piv is None:
+            continue
+        rows[r], rows[piv] = rows[piv], rows[r]
+        for i in range(len(rows)):
+            if i != r and rows[i][col]:
+                rows[i] = [a ^ b for a, b in zip(rows[i], rows[r])]
+        pivots.append(col)
+        r += 1
+    return pivots
+
+
+def consistent_assignments(constraints: Iterable[Any], variables: Sequence[str]) -> list[dict[str, int]]:
+    """Every assignment of ``variables`` (0/1) that satisfies the *linear* ``constraints``.
+
+    The deterministic counterpart of :func:`sample_consistent_assignment`: the
+    constraints are solved over GF(2) and the free variables take all values, so
+    ``n`` variables under ``r`` independent constraints give ``2^(n - r)``
+    assignments, and an inconsistent system gives none. A variable of the
+    constraints that is not among ``variables`` is taken as 0, as in
+    :func:`evaluate_phase`. Raises ``ValueError`` if a constraint is not linear.
+    """
+    names = list(variables)
+    rows = _linear_rows(constraints, names)
+    pivots = _echelon(rows, range(len(names)))
+    if any(row[-1] and not any(row[:-1]) for row in rows):
+        return []
+    free = [j for j in range(len(names)) if j not in pivots]
+    out = []
+    for bits in itertools.product([0, 1], repeat=len(free)):
+        values = [0] * len(names)
+        for j, b in zip(free, bits):
+            values[j] = b
+        for k, col in enumerate(pivots):
+            row = rows[k]
+            values[col] = (row[-1] + sum(values[j] for j in range(len(names)) if j != col and row[j])) % 2
+        out.append(dict(zip(names, values)))
+    return out
+
+
+def _variable_order(name: str) -> tuple[str, int]:
+    """``c[12]`` -> ``('c', 12)``, ``s3_r0`` -> ``('s3_r', 0)``: outcomes in the order they were measured."""
+    m = re.fullmatch(r'(.*?)\[?(\d+)\]?', name)
+    return (m.group(1), int(m.group(2))) if m else (name, -1)
+
+
+def reduce_modulo(phase: Any, constraints: Iterable[Any], registry: Any = None) -> Any:
+    """``phase`` with its parity of outcomes rewritten modulo the (linear) ``constraints``.
+
+    The constraints are brought to reduced echelon form with the *latest*
+    outcomes as pivots, and those are eliminated from the parity, so what is
+    left is written in the earliest outcomes it can be: two phases that agree in
+    every assignment the constraints allow come out equal. Only a phase of the
+    form ``constant + parity of Boolean variables`` (the phases of a reduced
+    diagram) is rewritten, with the constant taken modulo 2; any other phase is
+    returned unchanged. New variables are created in ``registry``.
+    """
+    if not isinstance(phase, Poly):
+        return phase
+    const, parity = Fraction(0), set()
+    for coeff, term in phase.terms:
+        c = Fraction(coeff)
+        if not term.vars:
+            const += c
+        elif (len(term.vars) == 1 and term.vars[0][1] == 1 and term.vars[0][0].is_bool
+              and c.denominator == 1):
+            if c.numerator % 2:
+                parity ^= {term.vars[0][0].name}
+        else:
+            return phase
+    names: list[str] = sorted(parity)
+    for c in constraints:
+        for v in c.free_vars() if isinstance(c, Poly) else ():
+            if v.name not in names:
+                names.append(v.name)
+    names.sort(key=_variable_order)
+    try:
+        rows = _linear_rows([c for c in constraints if isinstance(c, Poly)], names)
+    except ValueError:
+        rows = []
+    pivots = _echelon(rows, reversed(range(len(names))))
+    vec = [1 if n in parity else 0 for n in names]
+    for k, col in enumerate(pivots):
+        if vec[col]:
+            vec = [a ^ b for a, b in zip(vec, rows[k][:-1])]
+            const += rows[k][-1]
+    out: Any = None
+    for n, bit in zip(names, vec):
+        if bit:
+            out = new_var(n, True, registry) if out is None else out + new_var(n, True, registry)
+    const %= 2
+    if out is None:
+        return const
+    return out + const if const else out
+
+
+def phases_modulo(g: BaseGraph[VT, ET], constraints: Iterable[Any]) -> BaseGraph[VT, ET]:
+    """A clone of ``g`` (same vertices) with every phase rewritten by :func:`reduce_modulo`, e.g. to draw it."""
+    constraints = list(constraints)
+    h = g.clone()
+    for v in h.vertices():
+        h.set_phase(v, reduce_modulo(h.phase(v), constraints, h.var_registry))
+    h.rebind_variables_to_registry()
+    return h

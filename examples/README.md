@@ -36,8 +36,16 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   Pauli correction. Part 4 draws the reduction step by step, as the thesis did (the circuit, the
   normal form with 15 T-type gadgets, the same gadgets in the code's variables as in block
   form, one T† gadget, and T†|+⟩ fed into the encoder of the colour code), and checks every picture against the circuit by tensor contraction in all 32 runs the
-  detectors allow; the pictures come from [zx_steps.py](zx_steps.py). Every claim is then checked
-  with an independent state-vector simulation.
+  detectors allow. The pictures are PyZX's own drawings (`zx.draw_matplotlib`) of the library's
+  layout of a normal form (`layout_gpf`), with the phases written modulo the detectors
+  (`phases_modulo`); the change of variables is `change_variables`. The last of them is also drawn in
+  3D (`draw_graph_3d`) on the triangle of the Steane code, next to T†|+⟩ in the textbook Steane code.
+  Every claim is then checked with an independent state-vector simulation.
+- [CultivationDoubleCheck.ipynb](CultivationDoubleCheck.ipynb) — only the double-check of that
+  circuit, cut out of the program (`block_graph`) and reduced: T† gadgets on the seven inputs, T
+  gadgets on the seven outputs, the block's six detectors, and a check that it measures
+  ((X+Y)/√2)⊗7. The discard of a helper qubit's old state by its reset belongs before the block and is
+  left out.
 - [interactive_cultivation_3d.py](interactive_cultivation_3d.py) — step 4 of that reduction in an
   interactive window, drawn with `draw_graph_3d` on three planes: the non-Clifford state T†|+⟩, the
   Z-layer, and the seven output X-spiders on the textbook triangle of the Steane code (given as a

@@ -20,7 +20,13 @@
   both layers with the phases carried along, yielding a minimal GPF, the
   detectors (Boolean parities of outcomes that must vanish) and a zero flag;
 * :func:`equal_for_all_assignments` -- tensor equality for every assignment of
-  the Boolean variables, the verification used throughout the tests;
+  the Boolean variables, the verification used throughout the tests (only the
+  runs the detectors allow, :func:`consistent_assignments`, when they are linear);
+* :func:`change_variables` -- a state in new summation variables, with given
+  rows for its Z-layer (for example a code's logical operator and generators);
+* :func:`layout_gpf` and :func:`phases_modulo` -- a GPF diagram laid out in
+  layers, with its phases written modulo the detectors, for PyZX's drawing
+  functions (``zx.draw``, ``zx.draw_matplotlib``);
 * :func:`measurement_report` -- what happens to every measurement outcome of a
   diagram (frame / fixed / tied / gauge), its detectors, and which of them fire
   for the outcomes of a given run.
@@ -29,18 +35,19 @@
 from .gadgets import phase_polynomial, simplify_gadgets
 from .hadamard import (BOUNDARY_HADAMARD_KEY, has_boundary_hadamard, push_hadamards_to_boundary,
                        restore_boundary_hadamards)
-from .matrix import SplitMatrix, apply_matrix, reduce_rows, split_matrix
+from .matrix import SplitMatrix, apply_matrix, change_variables, reduce_rows, split_matrix
 from .normal_form import GPF_ROLE_KEY, LEAF, is_gpf, is_leaf, is_stem, layout_gpf, to_gpf
-from .reduce import (GPFResult, boolean_variables, constraint_system, detector_rank,
-                     equal_for_all_assignments, evaluate_phase, reduce_gpf, same_map,
-                     sample_consistent_assignment, unsatisfiable)
+from .reduce import (GPFResult, boolean_variables, consistent_assignments, constraint_system, detector_rank,
+                     equal_for_all_assignments, evaluate_phase, phases_modulo, reduce_gpf, reduce_modulo,
+                     same_map, sample_consistent_assignment, unsatisfiable)
 from .report import Measurement, MeasurementReport, measurement_report
 
 __all__ = [
     'to_gpf', 'is_gpf', 'is_leaf', 'is_stem', 'layout_gpf', 'GPF_ROLE_KEY', 'LEAF',
-    'SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix',
+    'SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'change_variables',
     'reduce_gpf', 'GPFResult', 'equal_for_all_assignments', 'boolean_variables', 'evaluate_phase',
-    'sample_consistent_assignment', 'same_map', 'constraint_system', 'detector_rank', 'unsatisfiable',
+    'sample_consistent_assignment', 'consistent_assignments', 'same_map', 'constraint_system',
+    'detector_rank', 'unsatisfiable', 'reduce_modulo', 'phases_modulo',
     'measurement_report', 'MeasurementReport', 'Measurement',
     'push_hadamards_to_boundary', 'restore_boundary_hadamards', 'has_boundary_hadamard',
     'BOUNDARY_HADAMARD_KEY', 'simplify_gadgets', 'phase_polynomial',

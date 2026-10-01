@@ -327,30 +327,55 @@ def is_gpf(g: BaseGraph[VT, ET]) -> bool:
 
 
 def layout_gpf(g: BaseGraph[VT, ET]) -> None:
-    """Rows: inputs 0, Z layer 1, X layer 2, outputs 3; gadgets beside their stem."""
-    ins, outs = set(g.inputs()), set(g.outputs())
-    zq = xq = 0
-    for v in sorted(g.vertices()):
-        ty = g.type(v)
-        if v in ins:
-            g.set_row(v, 0)
-        elif v in outs:
-            g.set_row(v, 3)
-        elif is_leaf(g, v):
-            continue
-        elif ty == VertexType.Z:
-            g.set_row(v, 1)
-            g.set_qubit(v, zq)
-            zq += 1
-        elif ty == VertexType.X:
-            g.set_row(v, 2)
-            g.set_qubit(v, xq)
-            xq += 1
-    for b in ins | outs:
+    """Lay out a GPF diagram for PyZX's drawing functions (``zx.draw``, ``zx.draw_matplotlib``).
+
+    Qubits (top to bottom): the X-spider of output ``j`` on line ``j``, then the
+    other X-spiders and the gadget hubs one per line; the Z-spiders spread evenly
+    over the same height, those on inputs first in input order and the others in
+    the order of the mean line of the X-spiders they are wired to, which keeps
+    edges short. Rows (left to right): inputs 0, Z-layer 1, X-layer ``1 + gap``,
+    outputs ``2 + gap``, with ``gap = max(2, height / 3)`` so that the edges
+    between the layers stay readable in a tall diagram (PyZX draws rows and
+    lines on the same scale). A boundary is on the line of its spider, and a
+    leaf beside its hub.
+    """
+    ins, outs = list(g.inputs()), list(g.outputs())
+    bnd = set(ins) | set(outs)
+    leaves = [v for v in g.vertices() if is_leaf(g, v)]
+    hubs = {next(iter(g.neighbors(v))) for v in leaves}
+    line: dict[VT, float] = {}
+    for j, b in enumerate(outs):
+        for w in g.neighbors(b):
+            if w not in bnd and g.type(w) == VertexType.X and w not in line:
+                line[w] = j
+    rest = [v for v in sorted(g.vertices())
+            if v not in bnd and v not in line and not is_leaf(g, v) and g.type(v) != VertexType.Z]
+    rest.sort(key=lambda v: (v in hubs, v))
+    for i, v in enumerate(rest):
+        line[v] = len(outs) + 0.5 + i
+    on_input = [next(iter(g.neighbors(b))) for b in ins]
+    zs = [v for v in sorted(g.vertices()) if g.type(v) == VertexType.Z and v not in bnd and not is_leaf(g, v)]
+
+    def mean_line(v: VT) -> float:
+        ls = [line[w] for w in g.neighbors(v) if w in line]
+        return sum(ls) / len(ls) if ls else 0.0
+
+    first = [v for v in on_input if v in zs]
+    zs = list(dict.fromkeys(first)) + sorted((v for v in zs if v not in first), key=mean_line)
+    height = max(len(outs) + len(rest) - 1, len(zs) - 1, 0)
+    x_row = 1 + max(2.0, height / 3)
+    for v in line:
+        g.set_row(v, x_row)
+    for i, v in enumerate(zs):
+        g.set_row(v, 1)
+        g.set_qubit(v, i * height / (len(zs) - 1) if len(zs) > 1 else mean_line(v))
+    for v, q in line.items():
+        g.set_qubit(v, q)
+    for b in ins + outs:
+        g.set_row(b, 0 if b in ins else x_row + 1)
         (n,) = list(g.neighbors(b))
         g.set_qubit(b, g.qubit(n))
-    for v in g.vertices():
-        if is_leaf(g, v):
-            (stem,) = list(g.neighbors(v))
-            g.set_qubit(v, g.qubit(stem) + 0.5)
-            g.set_row(v, g.row(stem) + (-0.7 if g.type(stem) == VertexType.Z else 0.7))
+    for v in leaves:
+        (stem,) = list(g.neighbors(v))
+        g.set_qubit(v, g.qubit(stem))
+        g.set_row(v, g.row(stem) + (-0.7 if g.type(stem) == VertexType.Z else 0.7))
