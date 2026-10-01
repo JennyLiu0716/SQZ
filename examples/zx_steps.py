@@ -115,15 +115,17 @@ def phase_label(phase, constraints=None):
 # -- drawing -------------------------------------------------------------------------------------------
 
 def draw_layers(g, ax=None, title='', labels=True, constraints=None, qubit_names=None, width=5.0,
-                znames=None):
+                znames=None, input_names=None):
     """Draw a diagram in generalized parity form: Z-layer, X-layer with outputs, gadgets.
 
     Z-spiders are ordered by the mean height of their X-neighbours, which keeps
     edges short, and named ``z1, z2, ...`` from the top; ``znames`` (a dict from
     Z-spider to name) fixes both the names and the order instead. ``labels``
     writes the phases (outcome parities reduced modulo ``constraints`` if
-    given); non-Pauli leaf phases are always written. Returns ``(ax, names)``
-    with ``names`` mapping each Z-spider to its name.
+    given); non-Pauli leaf phases are always written. Inputs, if the diagram has
+    any, are drawn on the left of the Z-spider they enter, named by
+    ``input_names``. Returns ``(ax, names)`` with ``names`` mapping each
+    Z-spider to its name.
     """
     outs = list(g.outputs())
     out_x = {}
@@ -159,6 +161,10 @@ def draw_layers(g, ax=None, title='', labels=True, constraints=None, qubit_names
         x[v] = 2.0
     for j, b in enumerate(outs):
         x[b], y[b] = 3.0, -j
+    ins = list(g.inputs())
+    for b in ins:
+        (w,) = list(g.neighbors(b))
+        x[b], y[b] = -1.8, y[w]
     for v in leaves:
         (hub,) = list(g.neighbors(v))
         x[v], y[v] = 2.7, y[hub]
@@ -175,6 +181,8 @@ def draw_layers(g, ax=None, title='', labels=True, constraints=None, qubit_names
             ax.plot(x[v], y[v], 'o', color='black', ms=2.5, zorder=3)
             if qubit_names is not None and v in outs:
                 ax.text(x[v] + 0.1, y[v], str(qubit_names[outs.index(v)]), fontsize=7, va='center')
+            if input_names is not None and v in ins:
+                ax.text(x[v] - 0.1, y[v], str(input_names[ins.index(v)]), fontsize=7, va='center', ha='right')
             if has_boundary_hadamard(g, v):
                 ax.add_patch(plt.Rectangle((x[v] - 0.55, y[v] - 0.12), 0.24, 0.24, facecolor=H_COLOUR,
                                            edgecolor='black', lw=0.6, zorder=3))
@@ -188,8 +196,9 @@ def draw_layers(g, ax=None, title='', labels=True, constraints=None, qubit_names
             dx, ha = (0.2, 'left') if is_leaf(g, v) else ((-0.2, 'right') if ty == VertexType.Z else (0.0, 'center'))
             dy = 0.0 if ha != 'center' else 0.22
             ax.text(x[v] + dx, y[v] + dy, text, fontsize=7 if len(text) < 20 else 6, ha=ha, va='center',
-                    color='#1f3fbf', zorder=4)
-    ax.set_xlim(-2.4 if labels else -0.6, 3.6)
+                    color='#1f3fbf', zorder=4,
+                    bbox=dict(facecolor='white', edgecolor='none', pad=0.3) if ins and ha == 'right' else None)
+    ax.set_xlim(-2.8 if ins else (-2.4 if labels else -0.6), 3.6)
     ax.set_ylim(min(y.values()) - 0.6, 0.8)
     ax.set_aspect('equal')
     ax.axis('off')
