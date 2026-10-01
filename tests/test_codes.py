@@ -17,7 +17,7 @@ from .programs import READOUT, steane_encoder, steane_t_injection
 from zxqec.codes import PauliString, code_of
 from zxqec.codes.phasepoly import Gadget, delta
 from zxqec.gpf import same_map
-from zxqec.qprogram import ParityControlled, QProgram
+from zxqec.qprogram import ParityControlled, QProgram, program_from_stim
 
 FOLD_GROUPS = [(0, 0, 'encode + round 1', 'encoder'), (1, 1, 'transversal H', 'logical gate'),
                (2, 3, 'round in code 2', 'syndrome extraction'), (4, 4, 'rotate', 'logical gate'),
@@ -121,6 +121,27 @@ def test_injection_without_correction_is_t_or_t_dagger():
 def test_injection_with_correction_is_t_in_every_run():
     act = steane_t_injection(correct=True).logical_action()
     assert act.operations() == {'T'} and act.is_deterministic()
+
+
+def test_a_parity_in_another_order_or_plus_one_splits_the_runs_alike():
+    # the classes of runs come from the parities on the reduced diagram's spiders; the same parity written
+    # in another order (or with + 1) must not be counted as a second one
+    from pyzx.graph import Graph
+    from pyzx.symbolic import new_var
+    from zxqec.codes.logical import _parity_key
+    g = Graph()
+    a, b, c = (new_var(n, True, g.var_registry) for n in ('c[1]', 'c[2]', 'c[3]'))
+    assert _parity_key(a + b + c) == _parity_key(c + a + b) == _parity_key(b + c + a + 1)
+    assert _parity_key(a + b) != _parity_key(a + c)
+    assert _parity_key(a * b) == str(a * b)                     # not a parity: kept as written
+
+
+def test_a_correction_from_an_outcome_that_is_always_0_keeps_one_run():
+    # X fed forward from measuring |0> (always 0), between T and T-dagger: the only run that can occur
+    # does nothing. Cultivation at d = 5 has such corrections before the T gates of its double-check.
+    p, _ = program_from_stim("RX 0\nT 0\nR 1\nM 1\nCX rec[-1] 0\nT_DAG 0\n")
+    assert '0 in |+>' in str(p.code_at(p.num_stages - 1))
+    assert p.logical_action().is_deterministic()
 
 
 def test_correction_is_s_on_odd_readout_parity():

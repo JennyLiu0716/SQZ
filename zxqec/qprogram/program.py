@@ -438,10 +438,15 @@ class QProgram:
         cut just before its first stage; the code after it off that cut followed by
         the block itself (so a merged block is not confused by the stages it was
         slid past). Returns a :class:`~zxqec.codes.LogicalAction`, whose
-        :meth:`~zxqec.codes.LogicalAction.verdict` answers question 3.
+        :meth:`~zxqec.codes.LogicalAction.verdict` answers question 3. For a block,
+        the detectors of the whole program on outcomes outside the block restrict
+        its classes of runs to those the program can produce
+        (:func:`~zxqec.codes.logical_action`).
         """
         from ..codes import logical_action
         from ..codes.logical import glue
+        from ..gpf import reduce_gpf
+        context: list[Any] = []
         if level is None:
             block_g, first = self.quantum_graph(), 0
         else:
@@ -449,8 +454,9 @@ class QProgram:
                 raise ValueError("give both level and index, or neither")
             block_g = self.block_graph(level, index, classical=False)
             first = self.levels.block(level, index).first
+            context = reduce_gpf(self.quantum_graph()).detectors
         before = self.prefix_graph(first - 1)
-        return logical_action(block_g, self._code(before), self._code(glue(before, block_g)))
+        return logical_action(block_g, self._code(before), self._code(glue(before, block_g)), context=context)
 
     def measurement_report(self, level: int | None = None, index: int | None = None,
                            context: bool = True, **kwargs: Any) -> Any:

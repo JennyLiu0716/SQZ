@@ -122,7 +122,7 @@ def summarize(program: Any, level: int) -> ProgramSummary:
         try:
             code_in = program._code(before)
             code_out = program._code(glue(before, g))
-            action = logical_action(g, code_in, code_out)
+            action = logical_action(g, code_in, code_out, context=whole.detectors)  # runs the program can produce
         except (NotACodeError, NotImplementedError) as e:  # e.g. a code that depends on the run
             if code_out is None:
                 problem = "the code {} the block could not be identified: {}".format(

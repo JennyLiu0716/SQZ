@@ -49,7 +49,9 @@ gate.
 from __future__ import annotations
 
 import itertools
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -133,14 +135,24 @@ def _labelled_decoder(code: StabilizerCode) -> BaseGraph:
 
 # -- the logical action --------------------------------------------------------------------
 
-def logical_action(block: BaseGraph, code_in: StabilizerCode, code_out: StabilizerCode) -> 'LogicalAction':
+def logical_action(block: BaseGraph, code_in: StabilizerCode, code_out: StabilizerCode,
+                   context: Sequence[Any] = ()) -> 'LogicalAction':
     """The logical action of ``block`` from ``code_in`` to ``code_out`` (see the module docstring).
 
     The block's input wires must be the qubits of ``code_in`` and its output
-    wires those of ``code_out``, matched by label.
+    wires those of ``code_out``, matched by label. ``context`` holds detectors
+    of the program around the block, for example those of the whole program.
+    Those that mention none of the block's own outcomes restrict the classes
+    of runs to what the program can produce: an outcome measured before the
+    block that the program fixes, which may appear in a sign of ``code_in``,
+    is read as its value. Those that mention an outcome of the block are left
+    out, so that the block is still analysed as a map of its own outcomes (a
+    check whose outcome the program predicts is still a measurement).
     """
     composite = glue(glue(_labelled_encoder(code_in), block), _labelled_decoder(code_out))
-    return LogicalAction(reduce_gpf(composite), code_in, code_out, composite, block=block)
+    own = set(boolean_variables(block))
+    outside = [d for d in context if hasattr(d, 'free_vars') and not ({v.name for v in d.free_vars()} & own)]
+    return LogicalAction(reduce_gpf(composite), code_in, code_out, composite, block=block, context=outside)
 
 
 @dataclass
@@ -170,6 +182,7 @@ class LogicalAction:
     _branches: list[Branch] | None = field(default=None, repr=False)
     block: BaseGraph | None = field(default=None, repr=False)
     _stays: tuple[bool | None] | None = field(default=None, repr=False)
+    context: list[Any] = field(default_factory=list, repr=False)  #: detectors on outcomes outside the block
 
     def stays_in_code(self) -> bool | None:
         """Whether the block maps the code before it into the code after it (``None``: not checked).
@@ -253,20 +266,23 @@ class LogicalAction:
 
         The reduced diagram depends on the outcomes only through the parities
         written on its spiders, so these runs show everything the block can do.
-        ``limit`` caps the number of distinct parities (2^limit runs).
+        Runs that violate a detector, of the block or of its context, are left
+        out. ``limit`` caps the number of distinct parities (2^limit runs); a
+        parity written in another order, or plus 1, is the same parity.
         """
         if self._branches is not None:
             return self._branches
         g = self.result.graph
-        fixed = _fixed_outcomes(self.detectors)
-        polys: dict[str, Any] = {}
+        constraints = list(self.detectors) + list(self.context)
+        fixed = _fixed_outcomes(constraints)
+        polys: dict[Any, Any] = {}
         for v in g.vertices():
             p = g.phase(v)
             if hasattr(p, 'free_vars') and p.free_vars():
                 p = _substitute(p, fixed)          # outcomes the detectors pin down read as constants
                 if hasattr(p, 'free_vars') and p.free_vars():
-                    polys.setdefault(str(p), p)
-        names = sorted(set(boolean_variables(g)) | {str(v) for c in self.detectors for v in c.free_vars()})
+                    polys.setdefault(_parity_key(p), p)
+        names = sorted(set(boolean_variables(g)) | {str(v) for c in constraints for v in c.free_vars()})
         plist = list(polys.values())
         if len(plist) > limit:
             raise TooManyRunsError(
@@ -276,8 +292,7 @@ class LogicalAction:
         for values in itertools.product((0, 1), repeat=len(plist)):
             targets = [p + 1 if val else p for p, val in zip(plist, values)]
             try:
-                a = sample_consistent_assignment(list(self.detectors) + targets, names,
-                                                 _rng(values))
+                a = sample_consistent_assignment(constraints + targets, names, _rng(values))
             except ValueError:
                 continue
             runs.append((values, a, self.matrix(a)))
@@ -637,11 +652,23 @@ def _fixed_outcomes(detectors: list[Any]) -> dict[str, int]:
     return out
 
 
+def _parity_key(p: Any) -> Any:
+    """The outcomes of a parity ``p`` (its constant ignored), or its text if ``p`` is not a parity."""
+    names: set[str] = set()
+    for coeff, term in p.terms:
+        if not term.vars:
+            continue
+        if len(term.vars) != 1 or term.vars[0][1] != 1 or Fraction(coeff).denominator != 1:
+            return str(p)
+        if int(coeff) % 2:
+            names ^= {term.vars[0][0].name}
+    return frozenset(names)
+
+
 def _substitute(p: Any, values: dict[str, int]) -> Any:
     names = {v.name for v in p.free_vars()} & set(values)
     if not names:
         return p
-    from fractions import Fraction
     subs = {v: Fraction(values[v.name]) for v in p.free_vars() if v.name in names}
     return p.substitute(subs)
 
