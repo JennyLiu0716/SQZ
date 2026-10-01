@@ -242,3 +242,64 @@ def test_step_4_on_the_triangle_of_the_steane_code(program):
     sides = [s for s in itertools.combinations(range(7), 3) if all(len(set(s) & set(f)) % 2 == 0 for f in faces)]
     assert len(sides) == 7
     assert all(zx.compare_tensors(zero, textbook(s), preserve_scalar=False) for s in sides)
+
+
+def test_the_double_check_on_its_own(program):
+    # examples/CultivationDoubleCheck.ipynb and Appendix E of the paper. The double-check block, without the
+    # discard of helper qubit 1's old state by its reset (a separate piece of the block's diagram), maps the
+    # seven code qubits to themselves; its detectors are the file's last six DETECTOR lines; reduced, it has a
+    # T-dagger gadget on each input and a T gadget reading exactly what each output reads; and it equals, up to a
+    # scalar, Z_6^c24 (I + (-1)^c24 H^7) with H = (X + Y)/sqrt(2), in every run its detectors allow
+    from fractions import Fraction
+    from functools import reduce
+    import pyzx as zx
+    from pyzx.utils import VertexType
+    from zxqec.gpf import boolean_variables, consistent_assignments
+    from zxqec.spacetime import get_logical_qubit
+    p, circ = program
+    level = p.group_stages(GROUPS)
+    g = p.block_graph(level, 3, classical=False)
+    left, pieces = set(g.vertices()), []
+    while left:
+        stack, piece = [left.pop()], set()
+        while stack:
+            v = stack.pop()
+            if v not in piece:
+                piece.add(v)
+                stack.extend(g.neighbors(v))
+        left -= piece
+        pieces.append(piece)
+    (discard,) = [x for x in pieces if not x & set(g.outputs())]
+    assert [get_logical_qubit(g, b) for b in g.inputs() if b in discard] == [1]
+    g.set_inputs(tuple(b for b in g.inputs() if b not in discard))
+    g.remove_vertices(list(discard))
+    qubits = [get_logical_qubit(g, b) for b in g.inputs()]
+    assert qubits == [get_logical_qubit(g, b) for b in g.outputs()] == [0, 3, 6, 8, 9, 11, 14]
+
+    res = reduce_gpf(g)
+    assert ({frozenset(d) for d in circ.detectors[-6:]}
+            == {frozenset(v.name for v in d.free_vars()) for d in res.detectors})
+    h = res.graph
+    on_input = {next(iter(h.neighbors(b))) for b in h.inputs()}
+    read_by_output = {frozenset(w for w in h.neighbors(next(iter(h.neighbors(b)))) if h.type(w) == VertexType.Z)
+                      for b in h.outputs()}
+    gadgets = []
+    for leaf in (v for v in h.vertices() if is_leaf(h, v)):
+        (hub,) = list(h.neighbors(leaf))
+        gadgets.append((h.phase(leaf), frozenset(w for w in h.neighbors(hub) if w != leaf)))
+    t_dag = [r for a, r in gadgets if a == Fraction(7, 4)]
+    t = [r for a, r in gadgets if a == Fraction(1, 4)]
+    assert len(gadgets) == 14 and len(t_dag) == 7 and len(t) == 7
+    assert {r for r in t_dag} == {frozenset([z]) for z in on_input}
+    assert set(t) == read_by_output
+
+    i2, x, y, z = np.eye(2), np.array([[0, 1], [1, 0]]), np.array([[0, -1j], [1j, 0]]), np.diag([1, -1])
+    hxy = reduce(np.kron, [(x + y) / np.sqrt(2)] * 7)
+    names = sorted(set(boolean_variables(g)) | {str(v) for c in res.constraints for v in c.free_vars()})
+    runs = consistent_assignments(res.constraints, names)
+    assert len(runs) == 2
+    for a in runs:
+        c24 = a['c[24]']
+        expected = reduce(np.kron, [z if (q == 6 and c24) else i2 for q in qubits]) @ (np.eye(2 ** 7) + (-1) ** c24 * hxy)
+        block = zx.tensor_to_matrix(zx.tensorfy(g.substitute_variables(a), preserve_scalar=False), 7, 7)
+        assert zx.compare_tensors(block, expected, preserve_scalar=False)

@@ -94,6 +94,7 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   `python examples/interactive_fold_h_3d.py [top|front|side]` for the whole protocol
   (`--level 2` shades its five phases instead of the nine stages), `--stage I` or
   `--block LEVEL I` for one stage or block only, `--phases` to label the spiders with
-  their phases, `--save FILE` to write the figure instead of opening a window.
+  their phases, `--miswired` for the wiring error of the thesis's circuit files
+  (`ComparingPrograms.ipynb`, Part 2), `--save FILE` to write the figure instead of opening a window.
 
 Planned: magic state distillation; cultivation at larger distances.
