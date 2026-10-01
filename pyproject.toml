@@ -43,6 +43,11 @@ dev = [
 gui = [
     "zxlive",
 ]
+distance = [
+    # circuit_distance: Stim and Mark Webster's codedistance (which brings its own solvers)
+    "stim>=1.13",
+    "codedistance>=0.0.8",
+]
 
 [tool.setuptools.packages.find]
 include = ["zxqec*"]
