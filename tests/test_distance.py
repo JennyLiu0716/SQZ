@@ -118,6 +118,31 @@ def test_z_distance_through_t_refuses_when_removing_t_is_not_exact():
                                                  ParityControlled('X', 1, ['c[0]']), T(1)]))
 
 
+def test_gidneys_published_d5_circuit_has_the_same_operations_and_fault_distance_4():
+    # Gidney et al.'s own d = 5 file (S for T): the same CNOTs, resets, measurements and noise as SOFT's, and
+    # Stim alone finds an undetectable logical error of weight 4 on it, as on SOFT's (graph-like search: 5);
+    # 4 is the fault distance d = 5 cultivation is designed to have before its escape stage
+    with open(os.path.join(CULTIVATION, 'd5_cultivation_gidney_s.stim')) as f:
+        gidney = stim.Circuit(f.read())
+    swap = {'T': 'S', 'T_DAG': 'S_DAG'}
+    lines = []
+    for name in ('d5_cultivation.stim', 'd5_final_check.stim'):
+        with open(os.path.join(CULTIVATION, name)) as f:
+            lines += f.read().splitlines()
+    soft = stim.Circuit('\n'.join(swap[l.split(' ', 1)[0]] + ' ' + l.split(' ', 1)[1] if l.split(' ', 1)[0] in swap
+                                  else l for l in lines))
+
+    def operations(c, names):
+        return [str(op) for op in c.flattened() if op.name in names
+                and not any(t.is_measurement_record_target for t in op.targets_copy())]
+    for names in ({'CX'}, {'R', 'RX', 'M', 'MX'}, {'DEPOLARIZE1', 'DEPOLARIZE2', 'X_ERROR', 'Z_ERROR'}):
+        assert operations(gidney, names) == operations(soft, names)
+    lightest = gidney.search_for_undetectable_logical_errors(dont_explore_detection_event_sets_with_size_above=5,
+                                                             dont_explore_edges_with_degree_above=9999,
+                                                             dont_explore_edges_increasing_symptom_degree=False)
+    assert len(lightest) == 4 and len(gidney.shortest_graphlike_error()) == 5
+
+
 def test_without_gates_keeps_the_rest_of_the_program():
     with open(os.path.join(CULTIVATION, 'd3_cultivation.stim')) as f:
         p = program_from_stim(f.read())[0]

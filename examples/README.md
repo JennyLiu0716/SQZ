@@ -99,8 +99,10 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   rounds in N order (`build_program(cnot_order='N')`, same noiseless program) 3. Then the Z distance of
   cultivation through its `T` gates (`z_distance_through_t`, which checks that removing them is
   exact, and refuses two small programs where it is not): 3 at d = 3 and 4 at d = 5, with the four
-  faults; why the X distance found by removing `T` is not the real one; and an independent check
-  with Stim alone on the published d = 5 file with `T → S`.
+  faults; why the X distance found by removing `T` is not the real one; an independent check
+  with Stim alone on the published d = 5 file with `T → S`; and Gidney et al.'s own d = 5 circuit
+  (`circuits/cultivation/d5_cultivation_gidney_s.stim`), the same CNOTs and noise, with fault distance 4 too:
+  the distance d = 5 cultivation is designed to have before its escape stage.
 - [SteaneTInjection.ipynb](SteaneTInjection.ipynb) — a `T` gate injected into the [[7,1,3]] Steane
   code, from the physical circuit to the logical gate. **Written for a reader with no quantum error
   correction background**: it draws the code and its stabilizers, the injection gadget and the

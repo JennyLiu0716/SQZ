@@ -40,3 +40,18 @@ the d = 3 file above, which uses a different injection. Gidney et al.'s own circ
 them; this one has the real gates. Its noise lines (`DEPOLARIZE1`, `X_ERROR`, ...) and the flip
 probabilities of noisy measurements are kept as published; `program_from_stim` skips them. Its
 `DETECTOR` lines are used, as for d = 3, only for comparison.
+
+## d = 5, as Gidney et al. published it
+
+`d5_cultivation_gidney_s.stim` is Gidney, Shutty and Jones's own d = 5 circuit, with `S` and `S_DAG`
+in place of `T` and `T_DAG`: the file
+`circuits/for_perfectionist_decoding/c=inject[unitary]+cultivate,p=0.001,noise=uniform,g=css,q=42,b=Y,r=10,d1=5.stim`
+of `circuits.zip` in C. Gidney, C. Jones, N. Shutty, *Data for "Magic state cultivation: growing T
+states as cheap as CNOT gates"*, Zenodo,
+[doi:10.5281/zenodo.13777072](https://doi.org/10.5281/zenodo.13777072) (CC BY 4.0), unchanged below
+a header of comments. It has the same CNOTs, resets, measurements and noise, in the same order, as
+`d5_cultivation.stim` followed by `d5_final_check.stim`. It differs in bookkeeping: it tracks the
+Pauli corrections of the growth in its `DETECTOR` lines instead of applying them, uses another pattern
+of `S` and `S_DAG` in the d = 5 double-check, and measures its final check in one `MPP`.
+`CircuitDistance.ipynb` uses it to show that the fault distance 4 of d = 5 cultivation belongs to the
+published protocol, not to SOFT's copy.
