@@ -8,8 +8,9 @@ pytest.importorskip('codedistance')
 
 import stim  # noqa: E402
 
-from zxqec.qprogram import (NotCliffordError, NotPhaseFreeError, circuit_distance,  # noqa: E402
-                            program_from_stim, without_gates)
+from zxqec.qprogram import (NotCliffordError, NotPhaseFreeError, ParityControlled, QProgram,  # noqa: E402
+                            TRemovalError, circuit_distance, program_from_stim, without_gates,
+                            z_distance_through_t)
 
 from .programs import steane_t_injection  # noqa: E402
 
@@ -84,6 +85,37 @@ def test_z_distance_of_cultivation_with_the_t_gates_removed():
         assert r.distance == expected and set(r.by_logical) == {('-', 'X')}
     with pytest.raises(NotCliffordError):
         circuit_distance(d3)                                      # with its T gates
+
+
+def test_z_distance_through_t_checks_its_conditions_on_cultivation():
+    # both cultivation circuits pass the two checks (same detectors with and without T; no X correction that a
+    # Z fault can trigger) and give the Z distances above
+    for name, expected in (('d3', 3), ('d5', 4)):
+        with open(os.path.join(CULTIVATION, name + '_cultivation.stim')) as f:
+            r = z_distance_through_t(program_from_stim(f.read())[0])
+        assert r.kind == 'Z' and r.distance == expected and set(r.by_logical) == {('-', 'X')}
+
+
+def _two_qubit_program(gates):
+    # qubit 1 is the logical input, qubit 0 a helper in |+>
+    from pyzx.circuit import Circuit
+    p = QProgram(2, bits=1, initial_states={0: '+'})
+    c = Circuit(2, bit_amount=1)
+    for g in gates:
+        c.add_gate(g)
+    p.add_circuit(c, name='only stage')
+    return p
+
+
+def test_z_distance_through_t_refuses_when_removing_t_is_not_exact():
+    from pyzx.circuit.gates import HAD, T, Measurement
+    # T T turns |+> into |+i>: its X measurement is random, without the T gates it is fixed (a detector more)
+    with pytest.raises(TRemovalError, match='detectors'):
+        z_distance_through_t(_two_qubit_program([T(0), T(0), HAD(0), Measurement(0, result_bit=0)]))
+    # an X correction controlled by an X-basis result: a Z fault triggers it, and the X error meets a T
+    with pytest.raises(TRemovalError, match='X correction'):
+        z_distance_through_t(_two_qubit_program([HAD(0), Measurement(0, result_bit=0),
+                                                 ParityControlled('X', 1, ['c[0]']), T(1)]))
 
 
 def test_without_gates_keeps_the_rest_of_the_program():

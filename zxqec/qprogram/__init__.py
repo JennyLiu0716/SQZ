@@ -29,12 +29,14 @@
   checked against the ones the tool derives: deterministic with their value,
   not deterministic with two runs as evidence, or unknown;
 * :func:`circuit_distance` -- the circuit distance of Clifford stages, with Stim
-  and ``codedistance`` (optional dependencies).
+  and ``codedistance`` (optional dependencies); :func:`z_distance_through_t` --
+  the Z distance of stages with ``T`` gates, after checking that removing them is exact.
 """
 
 from .compare import BlockComparison, ProgramComparison, compare_programs
 from .declared import DeclaredDetector, DetectorCheck, check_detectors
-from .distance import CircuitDistance, Fault, NotCliffordError, NotPhaseFreeError, circuit_distance, without_gates
+from .distance import (CircuitDistance, Fault, NotCliffordError, NotPhaseFreeError, TRemovalError, circuit_distance,
+                       without_gates, z_distance_through_t)
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage
@@ -44,5 +46,5 @@ __all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled',
            'StimCircuit', 'parse_stim', 'program_from_stim',
            'BlockComparison', 'ProgramComparison', 'compare_programs',
            'DeclaredDetector', 'DetectorCheck', 'check_detectors',
-           'CircuitDistance', 'Fault', 'NotCliffordError', 'NotPhaseFreeError', 'circuit_distance',
-           'without_gates']
+           'CircuitDistance', 'Fault', 'NotCliffordError', 'NotPhaseFreeError', 'TRemovalError', 'circuit_distance',
+           'without_gates', 'z_distance_through_t']

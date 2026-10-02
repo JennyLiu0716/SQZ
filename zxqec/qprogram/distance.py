@@ -56,13 +56,15 @@ supported.
 
 **Non-Clifford circuits.** A ``Z`` fault commutes with ``T`` and ``T^dag``, so in
 a phase-free circuit whose only non-Clifford gates are single-qubit ``T``-type
-gates, Z faults propagate and are detected exactly as in the circuit with those
-gates removed (:func:`without_gates`). The Z distance of the circuit is the
-Z distance of the circuit without them, measured against the logical operators
-of the code the real circuit ends in (``code_out``): for cultivation, the
-logical X. The X distance found the same way is not the X distance of the real
-circuit, since an X fault before a ``T`` becomes a Clifford error. Both are
-upper bounds on the full circuit distance.
+gates, a Z fault flips the same results as in the circuit with those gates
+removed (:func:`without_gates`). The Z distance of the circuit is then the Z
+distance of the circuit without them, measured against the logical operators of
+the code the real circuit ends in (``code_out``; for cultivation, the logical
+X), provided that the two circuits have the same detectors and that no Z fault
+can trigger a fed-forward X correction. :func:`z_distance_through_t` checks both
+and refuses otherwise. The Z distance is an upper bound on the full circuit
+distance. The X distance found by removing the gates is not the X distance of
+the real circuit, since an X fault before a ``T`` becomes a Clifford error.
 """
 
 from __future__ import annotations
@@ -77,7 +79,8 @@ from pyzx.circuit import Circuit
 
 from .program import QProgram
 
-__all__ = ["circuit_distance", "CircuitDistance", "Fault", "without_gates", "NotCliffordError", "NotPhaseFreeError"]
+__all__ = ["circuit_distance", "z_distance_through_t", "CircuitDistance", "Fault", "without_gates",
+           "NotCliffordError", "NotPhaseFreeError", "TRemovalError"]
 
 KINDS = ('full', 'Z', 'X')
 
@@ -88,6 +91,10 @@ class NotCliffordError(ValueError):
 
 class NotPhaseFreeError(ValueError):
     """A Z or X distance was asked of stages with a Hadamard or S gate that mixes X and Z faults."""
+
+
+class TRemovalError(ValueError):
+    """The Z distance of stages without their T gates is not shown to be the Z distance of the stages."""
 
 
 @dataclass(frozen=True)
@@ -181,8 +188,13 @@ def _result_name(m: Any) -> str:
     return m.result_symbol if m.result_symbol is not None else 'c[{}]'.format(m.result_bit)
 
 
-def _stage_lines(program: QProgram, first: int, last: int, kind: str, p: float) -> list[tuple[int, Any]]:
-    """(stage, line) for stages first..last with noise; measurements and fed-forward Paulis as tuples."""
+def _stage_lines(program: QProgram, first: int, last: int, kind: str, p: float,
+                 keep: tuple[str, ...] = ()) -> list[tuple[int, Any]]:
+    """(stage, line) for stages first..last with noise; measurements and fed-forward Paulis as tuples.
+
+    ``keep=('T',)`` writes ``T`` / ``T_DAG`` gates (without noise) instead of refusing them; such a circuit is
+    only read back by zxqec, never given to Stim.
+    """
     out: list[Any] = []
     where: list[int] = []
 
@@ -219,6 +231,8 @@ def _stage_lines(program: QProgram, first: int, last: int, kind: str, p: float) 
                     raise NotCliffordError("stage {}: {} is a correction Stim cannot express (only Paulis fed forward "
                                            "from outcomes)".format(s, g))
                 out.append(('FF', g.gate, g.target, g.bits))
+            elif name in keep:
+                out.append('{} {}'.format('T_DAG' if g.adjoint else 'T', g.target))
             else:
                 raise NotCliffordError("stage {}: {} is not a Clifford gate this function supports".format(s, g))
         where.extend([s] * (len(out) - len(where)))
@@ -241,7 +255,8 @@ def _fixed_letter(state: str) -> str:
 
 
 def _circuit(program: QProgram, first: int, last: int, kind: str, p: float, code_in: Any, code_out: Any,
-             in_letters: str | None, out_letters: str, fixed_in: dict[Any, str]) -> tuple[str, str, list[str]]:
+             in_letters: str | None, out_letters: str, fixed_in: dict[Any, str],
+             keep: tuple[str, ...] = ()) -> tuple[str, str, list[str]]:
     """(noiseless text, noisy text, the name of every measurement record in order); a TICK before every stage."""
     records: list[str] = []
     clean: list[str] = []
@@ -267,7 +282,7 @@ def _circuit(program: QProgram, first: int, last: int, kind: str, p: float, code
         both('MPP ' + _mpp(in_letters, labels_in))
         records.append('in_logical')
     stage = None
-    for s, line in _stage_lines(program, first, last, kind, p):
+    for s, line in _stage_lines(program, first, last, kind, p, keep):
         while stage is None or stage < s:                 # a TICK before every stage, empty ones included
             stage = first if stage is None else stage + 1
             both('TICK')
@@ -298,13 +313,11 @@ def _circuit(program: QProgram, first: int, last: int, kind: str, p: float, code
     return '\n'.join(clean) + '\n', '\n'.join(noisy) + '\n', records
 
 
-def _annotated(clean: str, noisy: str, records: list[str]) -> tuple[str | None, int]:
-    """``noisy`` with the detectors and the observable that zxqec derives from ``clean``; None if the final
-    logical measurement is random (then it cannot be an observable)."""
+def _detector_rows(clean: str, n: int) -> list[list[int]]:
+    """The detectors zxqec derives from the noiseless circuit ``clean``, as rows over its ``n`` results."""
     from ..gpf import reduce_gpf
     from .stim_text import program_from_stim
     program, _ = program_from_stim(clean)
-    n = len(records)
     rows = []
     for d in reduce_gpf(program.quantum_graph()).detectors:
         names = {v.name for v in d.free_vars()}
@@ -316,11 +329,36 @@ def _annotated(clean: str, noisy: str, records: list[str]) -> tuple[str | None, 
                 row[int(term.vars[0][0].name[2:-1])] ^= 1
         if any(row):
             rows.append(row)
-    col = records.index('out_logical')
+    return rows
+
+
+def _split_off(rows: list[list[int]], col: int) -> tuple[list[int] | None, list[list[int]]]:
+    """(a row with a 1 in ``col``, or None; the rows combined with it so that no other has a 1 there)."""
     pivot = next((r for r in rows if r[col]), None)
     if pivot is None:
+        return None, rows
+    return pivot, [[a ^ b for a, b in zip(r, pivot)] if r[col] else r for r in rows if r is not pivot]
+
+
+def _rank(rows: list[list[int]]) -> int:
+    basis: list[int] = []
+    for r in rows:
+        v = int(''.join(map(str, r)) or '0', 2)
+        for b in basis:
+            v = min(v, v ^ b)
+        if v:
+            basis.append(v)
+    return len(basis)
+
+
+def _annotated(clean: str, noisy: str, records: list[str]) -> tuple[str | None, int]:
+    """``noisy`` with the detectors and the observable that zxqec derives from ``clean``; None if the final
+    logical measurement is random (then it cannot be an observable)."""
+    n = len(records)
+    rows = _detector_rows(clean, n)
+    pivot, detectors = _split_off(rows, records.index('out_logical'))
+    if pivot is None:
         return None, len(rows)
-    detectors = [[a ^ b for a, b in zip(r, pivot)] if r[col] else r for r in rows if r is not pivot]
     rec = lambda row: ' '.join('rec[-{}]'.format(n - i) for i, b in enumerate(row) if b)
     lines = [noisy.rstrip('\n')] + ['DETECTOR ' + rec(r) for r in detectors if any(r)]
     lines.append('OBSERVABLE_INCLUDE(0) ' + rec(pivot))
@@ -410,7 +448,8 @@ def without_gates(program: QProgram, gates: Iterable[str] = ('T',)) -> QProgram:
 
     The stages, their names and permutations are kept; levels are not. Used for
     the Z distance of circuits whose only non-Clifford gates are single-qubit
-    ``T``-type gates (see the module docstring).
+    ``T``-type gates (see the module docstring); :func:`z_distance_through_t`
+    does that after checking that removing them is exact.
     """
     drop = set(gates)
     stages = program.stages
@@ -434,3 +473,76 @@ def without_gates(program: QProgram, gates: Iterable[str] = ('T',)) -> QProgram:
                 c.add_gate(g)
         out.add_circuit(c, name=st.name)
     return out
+
+
+# -- the Z distance through T gates -----------------------------------------------------------------
+
+def _x_basis_results(program: QProgram, last: int) -> set[str]:
+    """The results of stages 0..last measured in the X basis (a Hadamard right before the measurement)."""
+    previous: dict[int, Any] = {}
+    out: set[str] = set()
+    for s in range(last + 1):
+        for g in program.stage_circuit(s).gates:
+            if type(g).__name__ == 'Measurement' and type(previous.get(g.target)).__name__ == 'HAD':
+                out.add(_result_name(g))
+            for q in _qubits_of(g):
+                previous[q] = g
+    return out
+
+
+def z_distance_through_t(program: QProgram, first: int = 0, last: int | None = None, p: float = 1e-3,
+                         method: str = 'MIPDist', params: dict[str, Any] | None = None) -> CircuitDistance:
+    """The Z circuit distance of stages whose only non-Clifford gates are ``T`` and ``T^dag``.
+
+    A Z fault commutes with ``T`` and ``T^dag``, so it flips the same results with
+    and without them. The Z distance of the stages is then that of the stages
+    without their ``T`` gates (:func:`without_gates`), measured against the
+    logical operators of the code the real stages end in, provided that
+
+    1. the two have the same detectors: the detectors derived from the noiseless
+       circuits with and without the ``T`` gates, between the same boundary
+       checks, span the same space (the final logical measurement left out);
+    2. no Z fault can trigger a fed-forward X correction, which would be an X
+       error in front of later ``T`` gates: every X correction is controlled by
+       results of Z-basis measurements, which Z faults do not flip.
+
+    Both are checked, and :class:`TRemovalError` is raised if one fails. Any
+    other non-Clifford gate raises :class:`NotCliffordError`, and stages that
+    are not phase-free without their ``T`` gates :class:`NotPhaseFreeError`.
+    The X distance cannot be found this way: an X fault in front of a ``T`` gate
+    becomes a Clifford error that the circuit without ``T`` does not have.
+    """
+    last = program.num_stages - 1 if last is None else last
+    if not 0 <= first <= last < program.num_stages:
+        raise ValueError("stages {}..{} are not in the program's {} stages".format(first, last, program.num_stages))
+    _stage_lines(program, first, last, 'Z', p, keep=('T',))        # raises NotCliffordError for any other gate
+    stripped = without_gates(program)
+    _check_phase_free(stripped, first, last)
+    code_in = program.code_at(first - 1).data()
+    code_out = program.code_at(last).data()
+    if code_out.k != 1 or code_in.k > 1:
+        raise NotImplementedError("z_distance_through_t: one logical qubit after the stages and at most one before "
+                                  "are supported (k = {} before, {} after)".format(code_in.k, code_out.k))
+    x_basis = _x_basis_results(stripped, last)
+    for s in range(first, last + 1):
+        for g in stripped.stage_circuit(s).gates:
+            if type(g).__name__ == 'ParityControlled' and g.gate == 'X' and set(g.bits) & x_basis:
+                raise TRemovalError("stage {}: the X correction on qubit {} is controlled by {}, measured in the X "
+                                    "basis, so a Z fault can trigger it, and the X error it then makes does not "
+                                    "commute with T".format(s, g.target, ', '.join(sorted(set(g.bits) & x_basis))))
+    fixed_in = stripped.code_at(first - 1).fixed_qubits() if first > 0 else {}
+    out_letters = _letters(code_out, 'X')
+    for a in (('X', 'Z') if code_in.k else (None,)):
+        in_letters = _letters(code_in, a) if a else None
+        real, _, records = _circuit(program, first, last, 'Z', p, code_in, code_out, in_letters, out_letters,
+                                    fixed_in, keep=('T',))
+        bare, _, _ = _circuit(stripped, first, last, 'Z', p, code_in, code_out, in_letters, out_letters, fixed_in)
+        col = records.index('out_logical')
+        with_t = _split_off(_detector_rows(real, len(records)), col)[1]
+        without_t = _split_off(_detector_rows(bare, len(records)), col)[1]
+        r1, r2, both = _rank(with_t), _rank(without_t), _rank(with_t + without_t)
+        if not r1 == r2 == both:
+            raise TRemovalError("the stages have {} independent detectors with their T gates and {} without them, "
+                                "{} together{}: removing the T gates changes what the detectors see".format(
+                                    r1, r2, both, '' if a is None else ' (input logical {})'.format(a)))
+    return circuit_distance(stripped, first, last, 'Z', p, method, code_in, code_out, params)

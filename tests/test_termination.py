@@ -139,6 +139,33 @@ def test_every_reduction_of_the_case_studies_settles_in_a_few_rounds(monkeypatch
     assert found == [2, 2, 5]                                 # the numbers appendix A quotes
 
 
+def test_every_reduction_of_d5_cultivation_settles_within_seven_rounds(monkeypatch):
+    # the same count on d = 5 cultivation (codes at every cut, the five blocks of test_cultivation, the whole
+    # program); its gadget layer is simplified over more rounds than at d = 3
+    import os
+    import zxqec.codes.code as CC
+    import zxqec.codes.logical as L
+    from zxqec.qprogram import program_from_stim
+    from .test_cultivation import GROUPS_D5
+    count = _round_counter(monkeypatch)
+    per = []
+
+    def recording(*args, **kwargs):
+        count[0] = 0
+        out = reduce_gpf(*args, **kwargs)
+        per.append(count[0])
+        return out
+    monkeypatch.setattr(CC, 'reduce_gpf', recording)
+    monkeypatch.setattr(L, 'reduce_gpf', recording)
+    path = os.path.join(os.path.dirname(__file__), '..', 'examples', 'circuits', 'cultivation', 'd5_cultivation.stim')
+    p = program_from_stim(open(path).read())[0]
+    for s in range(p.num_stages):
+        p.code_at(s)
+    p.summary(p.group_stages(GROUPS_D5))
+    p.logical_action()
+    assert max(per) == 7                                      # the number appendix A and Section 5 quote
+
+
 def test_a_skeleton_count_that_cannot_be_met_raises():
     # the bound is a hard limit: a smaller one than the lemma's is refused loudly, not silently cut
     g = next(g for g in _random_circuits(7, 50) if _needs_steps(g))

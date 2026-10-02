@@ -49,7 +49,8 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   detectors and the observable are deterministic. As at d = 3, the result is
   drawn in 3D: in the variables of the faces that the final check measures, the reduced diagram is T†|+⟩ fed into the colour code of those faces, the same in every
   run, drawn on the file's own qubit coordinates next to that state built from the faces alone. Both are
-  compared by tensor contraction, and so is the whole circuit, run by run, in 4 of its 1024 allowed runs.
+  compared by tensor contraction, and so is the whole circuit, run by run, in 4 of its 1024 allowed runs
+  (all 1024: `cultivation_d5_all_runs.py`, about nine hours).
   There is no simulation check at 42 qubits.
 - [CultivationDoubleCheck.ipynb](CultivationDoubleCheck.ipynb) — only the double-check of that
   circuit, cut out of the program (`block_graph`) and reduced: T† gadgets on the seven inputs, T
@@ -68,6 +69,10 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   `python examples/interactive_cultivation_d5_3d.py [top|front|side]`, `--textbook` for T†|+⟩ in the
   colour code built from the faces alone, `--save FILE` to write the figure. The paper's d = 5 figure
   calls its functions.
+- [cultivation_d5_all_runs.py](cultivation_d5_all_runs.py) — the whole d = 5 circuit contracted in
+  every one of the 1024 runs its detectors allow, against T†|+⟩ in the colour code of the faces
+  (Part 6 of `Cultivation.ipynb` does 4); about nine hours on a laptop, `--start`/`--end` to split
+  the runs, `--log FILE`. All 1024 are equal.
 - [StabilizerCodes.ipynb](StabilizerCodes.ipynb) — the three questions for codes that are not CSS. The
   [[5,1,3]] code read off a ring of `CZ` gates (its stabilizers mix `X` and `Z`); its ideal encoder, built
   from the Choi state following Yeh et al., checked with numpy against its definition; a program that
@@ -92,8 +97,10 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   The fold-transversal H's rounds have circuit distance 2 although every code has distance 3, and
   `explain()` names the two hook errors; the mis-wired ones have 1, and with the CNOTs of two check
   rounds in N order (`build_program(cnot_order='N')`, same noiseless program) 3. Then the Z distance of
-  cultivation through its `T` gates (`without_gates`): 3 at d = 3 and 4 at d = 5, with the four
-  faults, and an independent check with Stim alone on the published d = 5 file with `T → S`.
+  cultivation through its `T` gates (`z_distance_through_t`, which checks that removing them is
+  exact, and refuses two small programs where it is not): 3 at d = 3 and 4 at d = 5, with the four
+  faults; why the X distance found by removing `T` is not the real one; and an independent check
+  with Stim alone on the published d = 5 file with `T → S`.
 - [SteaneTInjection.ipynb](SteaneTInjection.ipynb) — a `T` gate injected into the [[7,1,3]] Steane
   code, from the physical circuit to the logical gate. **Written for a reader with no quantum error
   correction background**: it draws the code and its stabilizers, the injection gadget and the
