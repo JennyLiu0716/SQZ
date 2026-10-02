@@ -92,6 +92,11 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   qubit changes the code), and the thesis's mis-wired fold-transversal H, whose codes and logical
   operations are all correct and which only the lost detectors (24 against 22) reveal, located in
   the round with the wrong check. Ends with what the comparison does not show.
+- [DecomposingTerms.ipynb](DecomposingTerms.ipynb) — a block as a sum of terms, one for each value of its
+  hidden spiders (`decompose_terms`, L. Yeh's decomposition), and what each term does to each qubit and
+  to X, Y, Z errors. On the d = 3 cultivation double-check the terms depend on how the hidden bit is
+  labelled: as reduced they link all code qubits; with `'fewest links'` they are "nothing" and T X T†
+  on every qubit (Y with S for T). Also the fold-transversal H's blocks and the d = 5 double-checks.
 - [CircuitDistance.ipynb](CircuitDistance.ipynb) — the circuit distance of Clifford stages
   (`circuit_distance`, with Stim and Mark Webster's `codedistance`; `pip install zxqec[distance]`).
   The fold-transversal H's rounds have circuit distance 2 although every code has distance 3, and

@@ -30,6 +30,9 @@
 * :func:`measurement_report` -- what happens to every measurement outcome of a
   diagram (frame / fixed / tied / gauge), its detectors, and which of them fire
   for the outcomes of a given run.
+* :func:`decompose_terms` -- a reduced diagram as a sum of terms, one for each
+  value of its hidden spiders, and what each term does to each qubit and to
+  X, Y, Z errors.
 """
 
 from .gadgets import phase_polynomial, simplify_gadgets
@@ -41,6 +44,7 @@ from .reduce import (GPFResult, boolean_variables, consistent_assignments, const
                      equal_for_all_assignments, evaluate_phase, phases_modulo, reduce_gpf, reduce_modulo,
                      same_map, sample_consistent_assignment, unsatisfiable)
 from .report import Measurement, MeasurementReport, measurement_report
+from .terms import Decomposition, Part, Piece, Term, decompose_terms
 
 __all__ = [
     'to_gpf', 'is_gpf', 'is_leaf', 'is_stem', 'layout_gpf', 'GPF_ROLE_KEY', 'LEAF',
@@ -51,4 +55,5 @@ __all__ = [
     'measurement_report', 'MeasurementReport', 'Measurement',
     'push_hadamards_to_boundary', 'restore_boundary_hadamards', 'has_boundary_hadamard',
     'BOUNDARY_HADAMARD_KEY', 'simplify_gadgets', 'phase_polynomial',
+    'decompose_terms', 'Decomposition', 'Part', 'Term', 'Piece',
 ]
