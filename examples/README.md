@@ -108,7 +108,13 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   hidden spiders (`decompose_terms`, L. Yeh's decomposition), and what each term does to each qubit and
   to X, Y, Z errors. On the d = 3 cultivation double-check the terms depend on how the hidden bit is
   labelled: as reduced they link all code qubits; with `'fewest links'` they are "nothing" and T X T†
-  on every qubit (Y with S for T). Also the fold-transversal H's blocks and the d = 5 double-checks.
+  on every qubit (Y with S for T). The check for distance: every term maps each Pauli error to the same
+  Pauli, up to a sign; it fails with real T and passes with S, while single-qubit Clifford terms are not
+  enough. Also the fold-transversal H's blocks and the d = 5 double-checks.
+- [DistanceChecking.ipynb](DistanceChecking.ipynb) — L. Yeh's distance-checking pipeline (`check_distance`):
+  the stages cut by gate type, the circuit distance of every Clifford run, and the non-Clifford stages
+  grouped and checked term by term. On d = 3 cultivation the double-check fails the check, as its fault
+  distance with real T (2) says.
 - [CircuitDistance.ipynb](CircuitDistance.ipynb) — the circuit distance of Clifford stages
   (`circuit_distance`, with Stim and Mark Webster's `codedistance`; `pip install zxqec[distance]`).
   The fold-transversal H's rounds have circuit distance 2 although every code has distance 3, and

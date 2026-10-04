@@ -33,13 +33,17 @@
   not deterministic with two runs as evidence, or unknown;
 * :func:`circuit_distance` -- the circuit distance of Clifford stages, with Stim
   and ``codedistance`` (optional dependencies); :func:`z_distance_through_t` --
-  the Z distance of stages with ``T`` gates, after checking that removing them is exact.
+  the Z distance of stages with ``T`` gates, after checking that removing them is exact;
+* :func:`check_distance` -- L. Yeh's distance-checking pipeline: stages cut by gate
+  type (:func:`split_by_gate_type`), circuit distances of the Clifford runs, and the
+  non-Clifford stages grouped and checked term by term (:func:`~zxqec.gpf.decompose_terms`).
 """
 
 from .compare import BlockComparison, ProgramComparison, compare_programs
 from .declared import DeclaredDetector, DetectorCheck, check_detectors
 from .distance import (CircuitDistance, Fault, NotCliffordError, NotPhaseFreeError, TRemovalError, circuit_distance,
                        without_gates, z_distance_through_t)
+from .distance_check import DistanceCheck, GroupCheck, SplitProgram, check_distance, split_by_gate_type
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage
@@ -51,4 +55,5 @@ __all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled',
            'BlockComparison', 'ProgramComparison', 'compare_programs',
            'DeclaredDetector', 'DetectorCheck', 'check_detectors',
            'CircuitDistance', 'Fault', 'NotCliffordError', 'NotPhaseFreeError', 'TRemovalError', 'circuit_distance',
-           'without_gates', 'z_distance_through_t', 'REWRITES', 'ReducedBlock', 'ReducedLevel', 'register_rewrite']
+           'without_gates', 'z_distance_through_t', 'REWRITES', 'ReducedBlock', 'ReducedLevel', 'register_rewrite',
+           'check_distance', 'split_by_gate_type', 'SplitProgram', 'GroupCheck', 'DistanceCheck']

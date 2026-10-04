@@ -22,9 +22,11 @@ and each hidden X-spider into ``|+...+> + |-...->`` writes the diagram as a sum 
 ``2^(n_i + n_o)`` terms (L. Yeh's decomposition). The diagram falls apart into
 connected *parts*, and the terms of the whole are the products of the terms of the
 parts, so each part is split on its own; a part with more than ``max_terms`` terms
-is reported but not split. Each term is reduced again and cut into its connected
-*pieces*, so it reads as single-qubit operators where it is one, and names the
-qubits it links where it is not.
+is reported but not split. Each term is reduced again and cut into *pieces*: its
+connected parts, each split further into a product over qubits where its matrix is
+one (a term can stay connected after its reduction and still be a product). So a
+term reads as single-qubit operators where it is one, and names the qubits it links
+where it is not.
 
 The terms depend on how the hidden bits are labelled: replacing a hidden bit ``z``
 by ``z + (parity of some inputs)`` changes the terms but not their sum. Both are
@@ -35,16 +37,29 @@ the first gives two terms that link all seven qubits, the second ``I`` and
 ``T X T^dag`` on every qubit.
 
 For each single-qubit piece the report gives its name, when it is one of a short
-list, and what it does to an X, Y or Z error on that qubit (``U E U^-1``). Whether
-all terms are single-qubit, and whether all terms of a part treat errors alike, are
-reported as information; which of these says something about distance is not
-decided here.
+list, and what it does to an X, Y or Z error on that qubit (``U E U^-1``). For every
+piece proportional to a unitary, linking qubits or not, it also gives the Pauli
+string on the outputs that an X, Y or Z error on each input becomes, up to a sign.
+
+The check reported for distance is that, in every part, every term maps each Pauli
+error to the same Pauli, up to a sign (:attr:`Decomposition.same_error_action`).
+Products of single-qubit Clifford gates are not enough: the d = 3 double-check
+splits into ``I`` and ``T X T^dag`` on every qubit and still loses fault distance
+with ``T`` (Chan et al., arXiv:2609.17706), since ``T X T^dag`` turns an X error into
+a Y error while ``I`` keeps it; with ``S`` in place of ``T`` the terms are ``I`` and
+``Y``, which keep every Pauli up to a sign, and the distance is kept. The check is
+not a proof of distance, and it is made without ``split_gadgets``: split at its hub,
+a phase gadget is a sum of Pauli strings, so a bare ``T`` splits into ``I`` and ``Z``
+and would pass. Whether the terms are single-qubit is reported as
+information, and only for the non-Clifford parts: a Clifford part generally has
+terms that link qubits, as one CNOT does.
 """
 
 from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -93,13 +108,54 @@ def _name(m: np.ndarray) -> str | None:
 
 def _error_action(m: np.ndarray) -> dict[str, str] | None:
     """For a 2x2 matrix proportional to a unitary: each of X, Y, Z -> the Pauli m E m^-1 is proportional to."""
-    if m.shape != (2, 2):
+    if m.shape != (2, 2) or not np.abs(m).max() > 0:
         return None
+    m = m / np.abs(m).max()                            # a piece carries the term's scalar, which can be tiny
     mm = m @ m.conj().T
     if abs(mm[0, 0]) < 1e-12 or not np.allclose(mm, mm[0, 0] * np.eye(2), atol=1e-9 * abs(mm[0, 0])):
         return None
     inv = np.linalg.inv(m)
     return {e: next((q for q in 'XYZ' if _proportional(m @ _P[e] @ inv, _P[q])), 'not a Pauli') for e in 'XYZ'}
+
+
+_PAULI4 = np.stack([np.eye(2), _P['X'], _P['Y'], _P['Z']])
+
+
+def _pauli_string(m: np.ndarray, k: int) -> str | None:
+    """The Pauli string (one of I, X, Y, Z per factor, first factor first) a 2^k x 2^k matrix is proportional to."""
+    letters = 'abcdefghijklmnopqrstuvwxyz'
+    out, inn, idx = letters[:k], letters[k:2 * k], 'ABCDEFGHIJKLMNOP'[:k]
+    operands: list[Any] = [m.reshape((2,) * (2 * k))]
+    subs = [out + inn]
+    for j in range(k):                                 # tr(P m) for every Pauli string P at once
+        operands.append(_PAULI4)
+        subs.append(idx[j] + inn[j] + out[j])
+    c = np.einsum(','.join(subs) + '->' + idx, *operands, optimize=True)
+    big = np.argwhere(np.abs(c) > 1e-9 * np.abs(c).max())
+    return ''.join('IXYZ'[i] for i in big[0]) if len(big) == 1 else None
+
+
+def _pauli_action(m: np.ndarray | None, inputs: tuple[Any, ...],
+                  outputs: tuple[Any, ...]) -> dict[tuple[Any, str], str] | None:
+    """For a matrix proportional to a unitary: (input qubit, E) -> the Pauli string ``m E m^-1`` is proportional
+    to, written on the output qubits (``'I'`` if none, ``'not a Pauli'`` if it is not one); None otherwise."""
+    if m is None or not inputs or len(inputs) != len(outputs) or not np.abs(m).max() > 0:
+        return None
+    m = m / np.abs(m).max()                            # a piece carries the term's scalar, which can be tiny
+    mm = m @ m.conj().T
+    if abs(mm[0, 0]) < 1e-12 or not np.allclose(mm, mm[0, 0] * np.eye(len(mm)), atol=1e-9 * abs(mm[0, 0])):
+        return None
+    inv = np.linalg.inv(m)
+    action = {}
+    for i, q in enumerate(inputs):
+        for e in 'XYZ':
+            error = np.eye(1)
+            for j in range(len(inputs)):
+                error = np.kron(error, _P[e] if j == i else np.eye(2))
+            s = _pauli_string(m @ error @ inv, len(outputs))
+            action[(q, e)] = 'not a Pauli' if s is None else (
+                ' '.join('{}{}'.format(a, r) for a, r in zip(s, outputs) if a != 'I') or 'I')
+    return action
 
 
 def _sorted(qubits: Any) -> list[Any]:
@@ -114,6 +170,7 @@ class Piece:
     matrix: np.ndarray | None              #: None when the piece has more than ``max_legs`` legs
     name: str | None                       #: e.g. 'T X T^dag' or '<+|'; None if not in the short list
     errors: dict[str, str] | None          #: what a single-qubit unitary piece does to X, Y, Z errors
+    paulis: dict[tuple[Any, str], str] | None = None   #: (input, E) -> the Pauli string E becomes (unitary pieces)
 
     @property
     def single_qubit(self) -> bool:
@@ -148,6 +205,14 @@ class Term:
         """Qubit -> what the term does to X, Y, Z errors there (single-qubit unitary pieces only)."""
         return {p.inputs[0]: p.errors for p in self.pieces if len(p.inputs) == 1 and len(p.outputs) == 1}
 
+    def pauli_action(self) -> dict[tuple[Any, str], str | None]:
+        """(input qubit, E) -> the Pauli string an E error there becomes, up to a sign (``'not a Pauli'`` if it
+        is not one); None where the piece is not proportional to a unitary or was not contracted. Pieces with no
+        output (an input that ends in an effect, such as a measured qubit) or no input (a state) are left out: an
+        error there does not reach an output."""
+        return {(q, e): None if p.paulis is None else p.paulis[(q, e)]
+                for p in self.pieces if p.inputs and p.outputs for q in p.inputs for e in 'XYZ'}
+
     def describe(self) -> list[str]:
         return [p.describe() for p in sorted(self.pieces, key=lambda p: _sorted(p.inputs + p.outputs)[:1])]
 
@@ -170,15 +235,47 @@ class Part:
         return None if self.terms is None else all(t.single_qubit for t in self.nonzero)
 
     @property
+    def clifford(self) -> bool | None:
+        """Every phase of the part (in the run) is a multiple of pi/2; None if not known."""
+        if self.diagram is None:
+            return None
+        for v in self.diagram.vertices():
+            try:
+                phase = Fraction(self.diagram.phase(v))
+            except (TypeError, ValueError):
+                return None
+            if (2 * phase).denominator != 1:
+                return False
+        return True
+
+    @property
     def same_error_action(self) -> bool | None:
-        """Every term is single-qubit and turns each X, Y, Z error into the same Pauli (None if not split)."""
+        """Every term turns each X, Y, Z error on each input into the same Pauli string, up to a sign.
+
+        False if, for some error on some input, two terms give different Paulis (an
+        error that ends in an effect in one term and reaches an output in another
+        counts as different), or a term gives something that is not a Pauli. Otherwise
+        None if the part was not split, or a term has a piece with inputs and outputs
+        that is not proportional to a unitary (it maps no Pauli to a Pauli; with
+        ``labelling='as reduced'`` the terms are often such projections) or was not
+        contracted (more than ``max_legs`` legs). Inputs that end in an effect in every
+        term are left out (:meth:`Term.pauli_action`). Meaningful only without
+        ``split_gadgets``, which writes every gadget as Pauli strings (see the module
+        docstring).
+        """
         if self.terms is None:
             return None
-        if not self.single_qubit:
-            return False
-        actions = [t.error_action() for t in self.nonzero]
-        return all(a == actions[0] for a in actions) and all(
-            e is not None and 'not a Pauli' not in e.values() for a in actions for e in a.values())
+        actions = [t.pauli_action() for t in self.nonzero]
+        unknown = False
+        for key in set().union(*actions) if actions else ():
+            images = [a.get(key, 'ends in an effect') for a in actions]
+            if 'not a Pauli' in images:
+                return False
+            if None in images:
+                unknown = True
+            elif len(set(images)) > 1:
+                return False
+        return None if unknown else True
 
 
 @dataclass
@@ -199,8 +296,18 @@ class Decomposition:
         return False if False in values else (None if None in values else True)
 
     @property
+    def non_clifford_single_qubit(self) -> bool | None:
+        """Every non-zero term of every non-Clifford part is a product of single-qubit pieces (None if there is no
+        non-Clifford part, or one was not split). The terms of a Clifford part generally link qubits."""
+        values = [p.single_qubit for p in self.parts if p.clifford is False]
+        if not values:
+            return None
+        return False if False in values else (None if None in values else True)
+
+    @property
     def same_error_action(self) -> bool | None:
-        """In every part, all terms turn each error into the same Pauli (None if a part was not split)."""
+        """In every part, every term turns each X, Y, Z error into the same Pauli, up to a sign: the check for
+        distance (see the module docstring). False if some part fails; else None if some part cannot tell."""
         values = [p.same_error_action for p in self.parts]
         return False if False in values else (None if None in values else True)
 
@@ -208,7 +315,8 @@ class Decomposition:
         n_hidden = sum(len(p.hidden) for p in self.parts)
         lines = ['labelling {!r}: {} part(s), {} hidden spider(s)'.format(self.labelling, len(self.parts), n_hidden)]
         for i, p in enumerate(self.parts, 1):
-            head = 'part {} (inputs {}, outputs {})'.format(i, list(p.inputs), list(p.outputs))
+            head = 'part {} ({}inputs {}, outputs {})'.format(
+                i, {True: 'Clifford; ', False: 'non-Clifford; '}.get(p.clifford, ''), list(p.inputs), list(p.outputs))
             if not p.hidden:
                 body = p.terms[0].describe() if p.terms else []
                 lines.append(head + ': no hidden spiders' + (': ' + body[0] if len(body) == 1 else ''))
@@ -225,8 +333,10 @@ class Decomposition:
                 lines += ['      ' + d for d in t.describe()]
             if len(p.terms) > max_terms_shown:
                 lines.append('  ... {} more terms'.format(len(p.terms) - max_terms_shown))
-        lines.append('every term single-qubit: {}; in every part, every term turns each error into the same '
-                     'Pauli: {}'.format(self.single_qubit, self.same_error_action))
+        lines.append('in every part, every term maps each Pauli error to the same Pauli (up to a sign): {}'.format(
+            self.same_error_action))
+        lines.append('every term of the non-Clifford parts single-qubit: {} (every term single-qubit: {})'.format(
+            self.non_clifford_single_qubit, self.single_qubit))
         return '\n'.join(lines)
 
     def __str__(self) -> str:
@@ -262,6 +372,56 @@ def _restricted(g: BaseGraph, comp: set) -> BaseGraph:
     return sub
 
 
+def _factors(m: np.ndarray, ins: tuple[Any, ...],
+             outs: tuple[Any, ...]) -> list[tuple[tuple[Any, ...], tuple[Any, ...], np.ndarray]]:
+    """A piece's matrix as a product over qubits where it is one: ``[(inputs, outputs, matrix)]``.
+
+    A qubit's legs (its output and its input, either may be missing) are split off
+    when the operator has Schmidt rank 1 between them and the other legs; what does
+    not split stays one piece. A term can stay connected after its reduction and
+    still be a product (a phase gadget split at its hub gives ``I x I`` and ``Z x Z``).
+    """
+    labels = list(dict.fromkeys(list(outs) + list(ins)))
+    if len(labels) <= 1:
+        return [(ins, outs, m)]
+    k_out = len(outs)
+    legs = {q: ([('out', outs.index(q))] if q in outs else []) + ([('in', ins.index(q))] if q in ins else [])
+            for q in labels}
+    axis = {('out', i): i for i in range(k_out)}
+    axis.update({('in', i): k_out + i for i in range(len(ins))})
+    t = m.reshape((2,) * (k_out + len(ins))).transpose([axis[leg] for q in labels for leg in legs[q]])
+    t = t.reshape([2 ** len(legs[q]) for q in labels])
+    remaining, out = list(labels), []
+    for q in labels:
+        if len(remaining) == 1:
+            break
+        j = remaining.index(q)
+        u, sv, vh = np.linalg.svd(np.moveaxis(t, j, 0).reshape(t.shape[j], -1), full_matrices=False)
+        if len(sv) > 1 and sv[1] > 1e-9 * sv[0]:
+            continue                                   # q is linked to the others
+        shape = [t.shape[i] for i in range(len(remaining)) if i != j]
+        out.append((q, u[:, 0] * sv[0]))
+        t = vh[0].reshape(shape)
+        remaining.pop(j)
+    if len(remaining) == 1:
+        out.append((remaining[0], t.reshape(-1)))
+        remaining = []
+    pieces = []
+    for q, vec in out:
+        has_out, has_in = q in outs, q in ins
+        pieces.append(((q,) if has_in else (), (q,) if has_out else (),
+                       vec.reshape(2 if has_out else 1, 2 if has_in else 1)))
+    if remaining:                                      # the linked rest, back to outputs x inputs
+        r_out = tuple(q for q in outs if q in remaining)
+        r_in = tuple(q for q in ins if q in remaining)
+        order = [leg for q in remaining for leg in legs[q]]
+        t = t.reshape((2,) * len(order))
+        t = t.transpose([order.index(('out', outs.index(q))) for q in r_out] +
+                        [order.index(('in', ins.index(q))) for q in r_in])
+        pieces.append((r_in, r_out, t.reshape(2 ** len(r_out), 2 ** len(r_in))))
+    return pieces
+
+
 def _pieces(g: BaseGraph, qin: dict, qout: dict, max_legs: int) -> list[Piece]:
     out = []
     for comp in _components(g):
@@ -269,12 +429,14 @@ def _pieces(g: BaseGraph, qin: dict, qout: dict, max_legs: int) -> list[Piece]:
         cout = [b for b in g.outputs() if b in comp]
         if not cin and not cout:
             continue                                   # a scalar
-        m = None
-        if len(cin) + len(cout) <= max_legs:
-            m = zx.tensor_to_matrix(zx.tensorfy(_restricted(g, comp), preserve_scalar=True), len(cin), len(cout))
-        name = _name(m) if m is not None else None
-        errors = _error_action(m) if m is not None and len(cin) == 1 and len(cout) == 1 else None
-        out.append(Piece(tuple(qin[b] for b in cin), tuple(qout[b] for b in cout), m, name, errors))
+        ins, outs = tuple(qin[b] for b in cin), tuple(qout[b] for b in cout)
+        if len(cin) + len(cout) > max_legs:
+            out.append(Piece(ins, outs, None, None, None))
+            continue
+        m = zx.tensor_to_matrix(zx.tensorfy(_restricted(g, comp), preserve_scalar=True), len(cin), len(cout))
+        for f_in, f_out, f in _factors(m, ins, outs):
+            errors = _error_action(f) if len(f_in) == 1 and len(f_out) == 1 else None
+            out.append(Piece(f_in, f_out, f, _name(f), errors, _pauli_action(f, f_in, f_out)))
     return out
 
 

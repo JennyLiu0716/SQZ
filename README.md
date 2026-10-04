@@ -127,3 +127,5 @@ python -m pytest
 ## License
 
 Apache-2.0, the same license as PyZX.
+
+The optional `distance` extra installs Stim (Apache-2.0) and Mark Webster's `codedistance`, which is MIT-licensed: its PyPI metadata says "GNUv3", but the license file it ships, like its repository, is the MIT License.

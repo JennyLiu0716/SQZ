@@ -32,7 +32,8 @@
   for the outcomes of a given run.
 * :func:`decompose_terms` -- a reduced diagram as a sum of terms, one for each
   value of its hidden spiders, and what each term does to each qubit and to
-  X, Y, Z errors.
+  X, Y, Z errors; the check for distance is that every term maps each Pauli
+  error to the same Pauli.
 """
 
 from .gadgets import phase_polynomial, simplify_gadgets

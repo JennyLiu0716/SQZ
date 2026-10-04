@@ -50,6 +50,7 @@ def test_the_d3_double_check_links_qubits_as_reduced_and_is_single_qubit_with_fe
         main = next(p for p in as_reduced.parts if p.outputs)
         assert main.hidden == ['Z-spider z1'] and len(main.nonzero) == 2
         assert all(not t.single_qubit for t in main.nonzero) and as_reduced.single_qubit is False
+        assert as_reduced.same_error_action is None        # these terms are projections, not unitaries: no answer
 
         fewest = decompose_terms(res, run, 'fewest links')
         main = next(p for p in fewest.parts if p.outputs)
@@ -58,6 +59,9 @@ def test_the_d3_double_check_links_qubits_as_reduced_and_is_single_qubit_with_fe
         assert set(nothing.values()) <= {'I', 'Z'} and set(gate_term.values()) <= flip
         assert fewest.single_qubit is True and fewest.same_error_action is same
         assert {p.errors['X'] for p in main.nonzero[1].pieces} == ({'X'} if same else {'Y'})
+        # only the T version has a non-Clifford part, and its terms are single-qubit Cliffords: not enough
+        assert main.clifford is (gate == 'S')
+        assert fewest.non_clifford_single_qubit is (None if gate == 'S' else True)
 
 
 def test_the_terms_of_each_part_add_up_to_the_part():
@@ -98,6 +102,52 @@ def test_clifford_blocks_read_as_their_gates():
     assert d.single_qubit is False
 
 
+def test_the_pauli_action_of_a_term_that_links_qubits():
+    # a CNOT is one Clifford part with one term that links its two qubits: X on the control and Z on the target
+    # spread to both qubits, as conjugation by the CNOT says; a T gate turns X into something that is not a Pauli
+    from pyzx.circuit import Circuit
+    from pyzx.circuit.gates import CNOT, T
+    c = Circuit(2)
+    c.add_gate(CNOT(0, 1))
+    d = decompose_terms(c.to_graph())
+    (part,) = d.parts
+    assert part.clifford is True and part.single_qubit is False and d.non_clifford_single_qubit is None
+    assert {k: v for k, v in part.terms[0].pauli_action().items() if k[1] != 'Y'} == {
+        (0, 'X'): 'X0 X1', (0, 'Z'): 'Z0', (1, 'X'): 'X1', (1, 'Z'): 'Z0 Z1'}
+    assert d.same_error_action is True
+    c = Circuit(1)
+    c.add_gate(T(0))
+    d = decompose_terms(c.to_graph())
+    assert d.parts[0].clifford is False and d.non_clifford_single_qubit is True
+    assert d.parts[0].terms[0].pauli_action()[(0, 'X')] == 'not a Pauli' and d.same_error_action is False
+    # split at its hub the T gadget is I + Z, which keep every Pauli up to a sign: why the check leaves hubs alone
+    assert decompose_terms(c.to_graph(), split_gadgets=True).same_error_action is True
+
+
+def test_a_term_that_stays_connected_but_is_a_product_is_split_by_its_matrix():
+    # a phase gadget split at its hub gives I x I and Z x Z: the reduced term stays connected, its matrix decides
+    import numpy as np
+    from pyzx.circuit import Circuit
+    from pyzx.circuit.gates import CNOT, T
+    from zxqec.gpf.terms import _factors
+    c = Circuit(2)
+    for g in (CNOT(0, 1), T(1), CNOT(0, 1)):
+        c.add_gate(g)
+    d = decompose_terms(c.to_graph(), split_gadgets=True)
+    assert [[pc.name for pc in t.pieces] for t in d.parts[0].nonzero] == [['I', 'I'], ['Z', 'Z']]
+    assert d.single_qubit is True
+    c = Circuit(2)                                       # a CNOT that is not undone still links the qubits
+    for g in (CNOT(0, 1), T(1)):
+        c.add_gate(g)
+    assert decompose_terms(c.to_graph(), split_gadgets=True).single_qubit is False
+    # the factors multiply back to the matrix, the linked rest kept as one piece, whatever the scale
+    x = np.array([[0, 1], [1, 0]])
+    cnot = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]])
+    (a, b) = _factors(np.kron(x, cnot) * 1e-12, (0, 1, 2), (0, 1, 2))
+    assert (a[0], a[1], b[0], b[1]) == ((0,), (0,), (1, 2), (1, 2))
+    assert np.allclose(np.kron(a[2], b[2]), np.kron(x, cnot) * 1e-12)
+
+
 def test_a_part_with_too_many_terms_is_reported_but_not_split():
     # the rounds of checks of d = 5 cultivation: one part with 18 hidden spiders (2^18 terms)
     from .test_cultivation import GROUPS_D5
@@ -108,6 +158,17 @@ def test_a_part_with_too_many_terms_is_reported_but_not_split():
     big = [part for part in d.parts if part.terms is None]
     assert [len(part.hidden) for part in big] == [18]
     assert d.complete is False and d.single_qubit is None and 'not split' in d.table()
+    assert d.same_error_action is None
+
+    # the d = 5 double-check, relabelled: "nothing" and T X T^dag or T^dag X T on the code qubits, so the terms
+    # turn an X error into different Paulis. Each piece carries the term's (tiny) scalar; the check is scale-free
+    res, runs = _reduced_block(p, GROUPS_D5, 4)
+    d = decompose_terms(res, runs[0], 'fewest links')
+    main = next(part for part in d.parts if part.same_error_action is False)
+    names = [{pc.name for pc in t.pieces} for t in main.nonzero]
+    assert names[0] == {'I'} and names[1] == {'T X T^dag', 'T^dag X T'}
+    assert all(pc.errors is not None for t in main.nonzero for pc in t.pieces)
+    assert d.same_error_action is False and d.non_clifford_single_qubit is True
 
 
 def test_runs_and_labellings_are_checked():

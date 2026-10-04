@@ -434,6 +434,13 @@ class QProgram:
         g = self._subdiagram(set(self.levels.block(level, index).stages))
         return g if classical else self._without_classical(g)
 
+    def stages_graph(self, first: int, last: int, classical: bool = True) -> BaseGraph:
+        """The sub-diagram of stages ``first`` to ``last``, cut out of the master graph (see :meth:`block_graph`)."""
+        if not 0 <= first <= last < self.num_stages:
+            raise ValueError("stages {}..{} are not in the program's {} stages".format(first, last, self.num_stages))
+        g = self._subdiagram(set(range(first, last + 1)))
+        return g if classical else self._without_classical(g)
+
     def prefix_graph(self, stage: int) -> BaseGraph:
         """The program cut after ``stage``: stages ``0..stage`` as one diagram, classical wires removed.
 
