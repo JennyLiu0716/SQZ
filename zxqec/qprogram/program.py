@@ -55,6 +55,7 @@ from ..spacetime.subdiagram import (
 )
 from ..spacetime.topology import Topology
 from .levels import Block, LevelManager
+from .rewrites import ReducedBlock, ReducedLevel, check_rewrite, reduce_block, reduce_level
 
 __all__ = ['Stage', 'QProgram']
 
@@ -128,6 +129,7 @@ class QProgram:
         self._stages: list[Stage] = []
         self.levels = LevelManager()
         self._graph: BaseGraph | None = None
+        self._reduced: dict[Block, ReducedBlock] = {}    # see reduced_block
 
     # -- construction -------------------------------------------------------
 
@@ -231,6 +233,7 @@ class QProgram:
         self._stages.append(st)
         self.levels.append_stage(st.name, role)
         self._graph = None
+        self._reduced.clear()                # the master graph changes, so do the cut diagrams
         return st.index
 
     # -- mapping / topology -------------------------------------------------
@@ -307,38 +310,78 @@ class QProgram:
     # -- levels -------------------------------------------------------------
 
     def level_up(self, level: int, start: int, end: int, name: str | None = None,
-                 role: str | None = None) -> int:
+                 role: str | None = None, rewrite: str | None = None) -> int:
         """Group blocks ``start..end`` of ``level`` into one; returns the new level.
 
         ``role`` says what the block is for ('encoder', 'syndrome extraction',
         'logical gate', 'injection', ...; see :data:`~zxqec.qprogram.levels.ROLES`);
-        :meth:`summary` checks each block against its role.
+        :meth:`summary` checks each block against its role. ``rewrite`` names
+        how the block is simplified when levelled up ('gpf', 'full_reduce', ...;
+        see :mod:`~zxqec.qprogram.rewrites` and :meth:`reduced_block`); ``None``
+        only groups.
         """
-        return self.levels.level_up(level, start, end, name, role)
+        check_rewrite(rewrite)
+        return self.levels.level_up(level, start, end, name, role, rewrite)
 
     def group_stages(self, groups: Sequence[tuple[Any, ...]]) -> int:
         """Level up from the stages in one call; returns the new level.
 
-        ``groups`` lists ``(first_stage, last_stage, name, role)`` (``name`` and
-        ``role`` optional) for consecutive, non-overlapping ranges of stages;
-        stages not covered stay blocks of their own.
+        ``groups`` lists ``(first_stage, last_stage, name, role, rewrite)``
+        (``name``, ``role`` and ``rewrite`` optional) for consecutive,
+        non-overlapping ranges of stages; stages not covered stay blocks of their own.
         """
-        spans = sorted(((g[0], g[1], g[2] if len(g) > 2 else None, g[3] if len(g) > 3 else None)
-                        for g in groups), key=lambda s: s[0])
+        spans = sorted(((g[0], g[1], g[2] if len(g) > 2 else None, g[3] if len(g) > 3 else None,
+                         g[4] if len(g) > 4 else None) for g in groups), key=lambda s: s[0])
         for (a0, a1, *_), (b0, _b1, *_) in zip(spans, spans[1:]):
             if b0 <= a1:
                 raise ValueError("groups {}..{} and {}.. overlap".format(a0, a1, b0))
+        for span in spans:
+            check_rewrite(span[4])
         level = 0
-        for first, last, name, role in reversed(spans):   # from the end, so indices do not shift
+        for first, last, name, role, rewrite in reversed(spans):   # from the end, so indices do not shift
             if not 0 <= first <= last < self.num_stages:
                 raise IndexError("invalid stage range {}..{}".format(first, last))
-            level = self.levels.level_up(level, first, last, name, role)
+            level = self.levels.level_up(level, first, last, name, role, rewrite)
         return level
 
     def merge_blocks(self, level: int, i: int, j: int, name: str | None = None,
-                     role: str | None = None) -> int | None:
+                     role: str | None = None, rewrite: str | None = None) -> int | None:
         """Merge two blocks of ``level`` if everything between them acts on other qubits."""
-        return self.levels.merge_blocks(level, i, j, self._block_qubits, name, role)
+        check_rewrite(rewrite)
+        return self.levels.merge_blocks(level, i, j, self._block_qubits, name, role, rewrite)
+
+    def reduced_block(self, level: int, index: int) -> ReducedBlock:
+        """A block's diagram after the rewrites of its level-ups (cached; classical wires left out).
+
+        A stage is its cut diagram. A composite block is its children's diagrams
+        (each rewritten if that child has a rewrite) glued along the qubit wires,
+        then rewritten by its own rewrite, if any. With no rewrite anywhere below
+        it, this is the same map as :meth:`block_graph`. The result also gives the
+        detectors the rewrites removed (it equals the cut diagram, up to a scalar,
+        on the outcomes that satisfy them), spider counts and times.
+        """
+        return reduce_block(self.levels.block(level, index),
+                            lambda b: self._without_classical(self._subdiagram(set(b.stages))),
+                            self._glue, self._reduced)
+
+    def reduced_level(self, level: int) -> ReducedLevel:
+        """The whole program with every block of ``level`` replaced by its rewritten diagram.
+
+        The blocks' :meth:`reduced_block` diagrams glued in order along the qubit
+        wires (classical wires left out), with the vertices that come from each
+        block and every detector the blocks removed. With no rewrite at or below
+        the level this is the same map as :meth:`quantum_graph`; otherwise it equals
+        it, up to a scalar, on the outcomes that satisfy those detectors.
+        """
+        return reduce_level(level, [self.reduced_block(level, k) for k in range(self.levels.level_size(level))],
+                            self._glue)
+
+    def describe_reduced(self, level: int) -> str:
+        """One line per block of ``level``: spiders before and after its rewrite, detectors removed."""
+        lines = ["Level {} ({} blocks), rewritten:".format(level, self.levels.level_size(level))]
+        for k in range(self.levels.level_size(level)):
+            lines.append("  Block {}: {}".format(k, self.reduced_block(level, k)))
+        return "\n".join(lines)
 
     def summary(self, level: int) -> Any:
         """One row per block of ``level``: its codes, logical action, measurements and checks.

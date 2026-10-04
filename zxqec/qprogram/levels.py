@@ -20,7 +20,9 @@ next level; :meth:`LevelManager.merge_blocks` does the same for two blocks that
 are not adjacent, provided everything in between acts on disjoint qubits, so
 the later block can be slid next to the earlier one without changing the
 program. A block is described by the set of stage indices it covers; the
-program turns that into a circuit or a sub-diagram.
+program turns that into a circuit or a sub-diagram. A composite block can also
+name a ``rewrite``, applied to its diagram when it is levelled up
+(:mod:`~zxqec.qprogram.rewrites`); without one, a level-up only groups.
 
 Ported from the thesis ``GateLevelManager``, with stages instead of single
 gates as the atomic unit.
@@ -46,6 +48,7 @@ class Block:
     children: tuple['Block', ...] = ()
     name: str | None = None
     role: str | None = None          #: what the block is for, e.g. 'syndrome extraction' (see ROLES)
+    rewrite: str | None = None       #: how the block is simplified when levelled up (None: grouping only)
 
     def __post_init__(self) -> None:
         if not self.stages:
@@ -138,11 +141,13 @@ class LevelManager:
     # -- grouping -----------------------------------------------------------
 
     def level_up(self, level: int, start: int, end: int, name: str | None = None,
-                 role: str | None = None) -> int:
+                 role: str | None = None, rewrite: str | None = None) -> int:
         """Group blocks ``start..end`` (inclusive) of ``level`` into one block.
 
         ``role`` records what the block is for (one of :data:`ROLES`, or any
         string); :meth:`QProgram.summary` checks the block against it.
+        ``rewrite`` names how the block is simplified when levelled up (see
+        :mod:`~zxqec.qprogram.rewrites`); ``None`` only groups.
 
         Returns the index of the new level, whose blocks are those of ``level``
         with the range replaced by the composite block (at position ``start``).
@@ -152,12 +157,13 @@ class LevelManager:
             raise IndexError("invalid range [{}, {}] for level {} with {} blocks".format(
                 start, end, level, len(blocks)))
         children = tuple(blocks[start:end + 1])
-        composite = Block(tuple(s for c in children for s in c.stages), children, name, role)
+        composite = Block(tuple(s for c in children for s in c.stages), children, name, role, rewrite)
         return self._push_level(level, blocks[:start] + [composite] + blocks[end + 1:])
 
     def merge_blocks(self, level: int, i: int, j: int,
                      block_qubits: Callable[[Block], Iterable[int]],
-                     name: str | None = None, role: str | None = None) -> int | None:
+                     name: str | None = None, role: str | None = None,
+                     rewrite: str | None = None) -> int | None:
         """Merge blocks ``i`` and ``j`` of ``level`` (not necessarily adjacent).
 
         The later block is moved next to the earlier one; this is only sound
@@ -176,7 +182,7 @@ class LevelManager:
         for k in range(lo + 1, hi):
             if later & set(block_qubits(blocks[k])):
                 return None
-        composite = Block(blocks[lo].stages + blocks[hi].stages, (blocks[lo], blocks[hi]), name, role)
+        composite = Block(blocks[lo].stages + blocks[hi].stages, (blocks[lo], blocks[hi]), name, role, rewrite)
         new_blocks = blocks[:lo] + [composite] + blocks[lo + 1:hi] + blocks[hi + 1:]
         return self._push_level(level, new_blocks)
 
@@ -192,5 +198,6 @@ class LevelManager:
                 content = ", ".join("stage {}".format(s) for s in b.stages)
             label = " '{}'".format(b.name) if b.name else ""
             role = " ({})".format(b.role) if b.role else ""
-            lines.append("  Block {}{}{}: [{}]".format(k, label, role, content))
+            rewrite = " <rewrite: {}>".format(b.rewrite) if b.rewrite else ""
+            lines.append("  Block {}{}{}{}: [{}]".format(k, label, role, rewrite, content))
         return "\n".join(lines)

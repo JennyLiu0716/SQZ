@@ -23,7 +23,10 @@ Both views are matplotlib figures (matplotlib is imported lazily):
   spider at ``(x, y, t)`` where ``(x, y)`` is the position of its physical
   qubit in a :class:`~zxqec.spacetime.Topology` and ``t`` its timestep, ZX
   edges as lines, the hardware connectivity drawn faintly on the first and
-  last time layer, and the blocks of a level as translucent slabs.
+  last time layer, and the blocks of a level as translucent slabs;
+* :func:`draw_level_3d` / :func:`level_layout_3d` -- the same for the program
+  as a level rewrites it: blocks without a rewrite where they are in space-time,
+  the spiders of a rewritten block laid out between the ends of its wires.
 
 Ported from the thesis ``draw_topology_3d`` without its button widgets. Every
 function returns the figure: in a notebook it is displayed inline; in a script
@@ -46,7 +49,7 @@ if TYPE_CHECKING:
     from ..qprogram.program import QProgram
 
 __all__ = ['draw_program', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views',
-           'block_colors', 'VIEWS', 'time_positions']
+           'draw_level_3d', 'level_layout_3d', 'block_colors', 'VIEWS', 'time_positions']
 
 #: Named viewpoints ``(elev, azim)`` for the 3D view: ``default`` is oblique,
 #: ``top`` the bird's-eye view onto the hardware layout (time towards the
@@ -159,9 +162,17 @@ def _time_layout(g: BaseGraph[VT, ET]) -> BaseGraph[VT, ET]:
     return h
 
 
+def program_layout(program: 'QProgram', time_axis: bool = True, classical: bool = False) -> BaseGraph[VT, ET]:
+    """The graph :func:`draw_program` draws: the master graph (without classical wires unless
+    ``classical``), laid out on a time axis if ``time_axis``. Its vertex numbers are the ones
+    the ``positions`` argument of :func:`draw_program` refers to."""
+    g = program.graph() if classical else program.quantum_graph()
+    return _time_layout(g) if time_axis else g
+
+
 def draw_program(program: 'QProgram', level: int | None = None, *,
                  time_axis: bool = True, show_time: bool = True, alpha: float = 0.15,
-                 classical: bool = False, **kwargs: Any) -> Any:
+                 classical: bool = False, positions: Any = None, **kwargs: Any) -> Any:
     """Draw the master graph of ``program`` in 2D with matplotlib; returns the figure.
 
     With ``time_axis`` (default) spiders are placed at their timestep along the
@@ -169,14 +180,22 @@ def draw_program(program: 'QProgram', level: int | None = None, *,
     the time it spans. ``show_time`` adds PyZX's timestep labels and squiggly
     delays. If ``level`` is given, every block of that level is shaded over the
     ticks it occupies and labelled. ``classical=True`` also draws the
-    classical-bit wires. Remaining keyword arguments go to
-    :func:`pyzx.draw_matplotlib` (e.g. ``figsize``, ``labels``).
+    classical-bit wires. ``positions`` maps vertices of :func:`program_layout`
+    to ``(row, qubit)`` where they are drawn instead (spiders moved by hand,
+    e.g. in :func:`~zxqec.spacetime.levels_view.view_levels`). Remaining keyword
+    arguments go to :func:`pyzx.draw_matplotlib` (e.g. ``figsize``, ``labels``).
     """
     from pyzx.drawing import draw_matplotlib
     from pyzx.utils import get_mode, settings
 
     g = program.graph() if classical else program.quantum_graph()
-    h = _time_layout(g) if time_axis else g
+    h = program_layout(program, time_axis, classical)
+    if positions:
+        h = h.clone()                         # clone keeps the vertex numbers; never move the master graph
+        for v, (row, qubit) in positions.items():
+            if v in h.vertex_set():
+                h.set_row(v, row)
+                h.set_qubit(v, qubit)
     # pyzx's draw_matplotlib calls plt.show() itself outside notebooks, which
     # would block before the shading is added; make it just return the figure.
     mode = get_mode()
@@ -244,7 +263,8 @@ def draw_graph_3d(g: BaseGraph[VT, ET], topology: Topology | None = None, *,
                   view: str | tuple[float, float] = 'default',
                   elev: float | None = None, azim: float | None = None,
                   layer_lines: bool | None = None, buttons: bool = False,
-                  ax: Any = None) -> Any:
+                  ax: Any = None, finish: bool = True,
+                  positions: dict[Any, tuple[float, float, float]] | None = None) -> Any:
     """Draw a time-annotated graph in 3D: space in the ``x``/``y`` plane, time upwards.
 
     ``topology`` gives the ``(x, y)`` position of every physical wire (the
@@ -261,6 +281,11 @@ def draw_graph_3d(g: BaseGraph[VT, ET], topology: Topology | None = None, *,
     any interactive matplotlib backend; ``buttons=True`` adds one button per
     named view below the plot that turns the figure to that viewpoint (meant
     for windows, not for static notebook output). Returns the figure.
+    ``finish=False`` leaves the figure as it is (by default it is closed in a
+    notebook, so that it is not shown twice), for drawing into a figure that
+    stays open, such as a window. ``positions`` gives ``(x, y, t)`` for some
+    vertices, used instead of their wire and timestep (as :func:`draw_level_3d`
+    does for the spiders of a rewritten block).
     """
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection  # noqa: F401  (registers the 3d projection)
@@ -284,8 +309,10 @@ def draw_graph_3d(g: BaseGraph[VT, ET], topology: Topology | None = None, *,
     else:
         fig = ax.figure
     pos = _positions(g, topology)
+    if positions:
+        pos.update({v: p for v, p in positions.items() if v in pos})
     if not pos:
-        return _finish(fig)
+        return _finish(fig) if finish else fig
 
     # hardware connectivity on the bottom and top time layers
     ticks = sorted({int(z) for v, (_, _, z) in pos.items() if g.type(v) != VertexType.BOUNDARY})
@@ -324,16 +351,7 @@ def draw_graph_3d(g: BaseGraph[VT, ET], topology: Topology | None = None, *,
 
     # blocks as translucent slabs spanning the occupied region in space
     if blocks:
-        xs_all = [p[0] for p in pos.values()]
-        ys_all = [p[1] for p in pos.values()]
-        x0, x1 = min(xs_all) - 0.3, max(xs_all) + 0.3
-        y0, y1 = min(ys_all) - 0.3, max(ys_all) + 0.3
-        colors = block_colors(len(blocks))
-        for (label, ranges), color in zip(blocks, colors):
-            for lo, hi in ranges:
-                _slab(ax, (x0, x1), (y0, y1), (lo - 0.5, hi + 0.5), color)
-            if ranges:
-                ax.text(x0, y0, ranges[0][0] - 0.5, label, fontsize=7, color=color)
+        _block_slabs(ax, *_space_extent(pos), blocks)
 
     if layer_lines and ticks:
         xs_all = [p[0] for p in pos.values()]
@@ -363,7 +381,26 @@ def draw_graph_3d(g: BaseGraph[VT, ET], topology: Topology | None = None, *,
     ax.view_init(elev=v_elev, azim=v_azim)
     if buttons:
         _add_view_buttons(fig, ax)
-    return _finish(fig)
+    return _finish(fig) if finish else fig
+
+
+def _space_extent(pos: dict[Any, tuple[float, float, float]]) -> tuple[tuple[float, float], tuple[float, float]]:
+    """The ``x`` and ``y`` ranges of the occupied region, with a margin: what a block's slab spans."""
+    xs_all = [p[0] for p in pos.values()]
+    ys_all = [p[1] for p in pos.values()]
+    return (min(xs_all) - 0.3, max(xs_all) + 0.3), (min(ys_all) - 0.3, max(ys_all) + 0.3)
+
+
+def _block_slabs(ax: Any, xr: tuple[float, float], yr: tuple[float, float],
+                 blocks: Sequence[tuple[str, Sequence[tuple[int, int]]]]) -> list[Any]:
+    """Every block as a translucent slab over its tick ranges, labelled in its colour; returns the artists."""
+    artists: list[Any] = []
+    for (label, ranges), color in zip(blocks, block_colors(len(blocks))):
+        for lo, hi in ranges:
+            artists += _slab(ax, xr, yr, (lo - 0.5, hi + 0.5), color)
+        if ranges:
+            artists.append(ax.text(xr[0], yr[0], ranges[0][0] - 0.5, label, fontsize=7, color=color))
+    return artists
 
 
 def _add_view_buttons(fig: Any, ax: Any) -> None:
@@ -412,18 +449,24 @@ def draw_program_views(program: 'QProgram', level: int | None = None, *,
 
 
 def _slab(ax: Any, xr: tuple[float, float], yr: tuple[float, float],
-          zr: tuple[float, float], color: str) -> None:
-    """A translucent slab on a 3D axes: tinted top and bottom faces plus its outline."""
+          zr: tuple[float, float], color: str, *, face_alpha: float = 0.06, linewidth: float = 0.6,
+          linestyle: str = '-', line_alpha: float = 0.6) -> list[Any]:
+    """A translucent slab on a 3D axes: tinted top and bottom faces plus its outline; returns the artists."""
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
     (x0, x1), (y0, y1), (z0, z1) = xr, yr, zr
     bottom = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0)]
     top = [(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
-    ax.add_collection3d(Poly3DCollection([bottom, top], facecolors=color, alpha=0.06, linewidths=0))
+    artists: list[Any] = []
+    if face_alpha:
+        artists.append(ax.add_collection3d(Poly3DCollection([bottom, top], facecolors=color, alpha=face_alpha,
+                                                            linewidths=0)))
+    line = dict(color=color, linewidth=linewidth, linestyle=linestyle, alpha=line_alpha)
     for face in (bottom, top):
         xs, ys, zs = zip(*(face + face[:1]))
-        ax.plot(xs, ys, zs, color=color, linewidth=0.6, alpha=0.6)
+        artists += ax.plot(xs, ys, zs, **line)
     for (x, y, _), (_, _, _) in zip(bottom, top):
-        ax.plot([x, x], [y, y], [z0, z1], color=color, linewidth=0.6, alpha=0.6)
+        artists += ax.plot([x, x], [y, y], [z0, z1], **line)
+    return artists
 
 
 def draw_program_3d(program: 'QProgram', level: int | None = None, classical: bool = False,
@@ -437,3 +480,188 @@ def draw_program_3d(program: 'QProgram', level: int | None = None, classical: bo
     blocks = _block_tick_ranges(program, level) if level is not None else None
     g = program.graph() if classical else program.quantum_graph()
     return draw_graph_3d(g, program.topology, blocks=blocks, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# 2+1D: the program as a level rewrites it
+# ---------------------------------------------------------------------------
+
+_POSITION = '_zxqec_position_3d'          # vertex data carrying (x, y, t) through the gluing
+
+
+def level_layout_3d(program: 'QProgram', level: int) -> tuple[BaseGraph, dict[Any, tuple[float, float, float]],
+                                                               tuple[Any, ...]]:
+    """The program as ``level`` rewrites it (:meth:`QProgram.reduced_level`), with ``(x, y, t)`` for every vertex.
+
+    A rewritten diagram has no place in space-time, so the layout keeps what
+    has one. A stage without a rewrite (and a block without one, made of such
+    pieces) is where it is in the program: its spiders on their wires at their
+    timesteps, as :func:`draw_program_3d` draws them. In a block with a rewrite
+    only the ends of its wires are fixed, each where the wire enters or leaves
+    the block (the wire's position, one tick before the block's first timestep
+    or after its last). Every spider inside is laid out by its distances in the
+    diagram to those ends: it sits over the wire ends nearest to it (their
+    average position), at a time that divides the block in the ratio of its
+    distances to the nearest input and the nearest output. In a normal form, the
+    Z-spiders next to the inputs sit low over their wires, the X-spiders next to
+    the outputs high over theirs, and the edges between them cross the block.
+    Spiders that would coincide are moved apart in time by a quarter tick. These
+    positions are a layout, not a claim about where or when anything happens.
+
+    Returns the glued diagram (the same map as ``reduced_level(level).graph``),
+    the positions, and every detector the level's blocks removed.
+    """
+    reduced = [program.reduced_block(level, k) for k in range(program.levels.level_size(level))]
+    g = _glued([_positioned(program, rb) for rb in reduced], program)
+    pos: dict[Any, tuple[float, float, float]] = {}
+    for v in g.vertices():
+        data = dict(g.vdata_dict(v))
+        pos[v] = data.pop(_POSITION)
+        g.set_vdata_dict(v, data)
+    return g, pos, tuple(d for rb in reduced for d in rb.detectors)
+
+
+def draw_level_3d(program: 'QProgram', level: int, **kwargs: Any) -> Any:
+    """The 2+1D view of the program as ``level`` rewrites it, laid out by :func:`level_layout_3d`.
+
+    The blocks of the level are drawn as slabs over the ticks they replace, and
+    the outcomes in the phases are written modulo the detectors the rewrites
+    removed (:func:`~zxqec.gpf.phases_modulo`). Keyword arguments go to
+    :func:`draw_graph_3d`. Returns the figure.
+    """
+    from ..gpf import phases_modulo
+
+    g, pos, detectors = level_layout_3d(program, level)
+    return draw_graph_3d(phases_modulo(g, detectors), program.topology, positions=pos,
+                         blocks=_block_tick_ranges(program, level), **kwargs)
+
+
+def _glued(parts: list[BaseGraph], program: 'QProgram') -> BaseGraph:
+    g = parts[0]
+    for h in parts[1:]:
+        program._glue(g, h)                   # copies the vertex data, positions included
+    return g
+
+
+def _positioned(program: 'QProgram', rb: Any) -> BaseGraph:
+    """A copy of a reduced block's diagram with every vertex's ``(x, y, t)`` in its vertex data."""
+    if rb.block.rewrite is None and rb.children:
+        return _glued([_positioned(program, c) for c in rb.children], program)
+    g = rb.graph.copy()
+    topology = program.topology
+    if rb.block.rewrite is None:              # a stage: where it is
+        pos = _positions(g, topology)
+    else:
+        pos = _between_wire_ends(g, *_wire_ends(program, rb.block, g))
+    for v, p in pos.items():
+        g.set_vdata(v, _POSITION, p)
+    return g
+
+
+def _wire_ends(program: 'QProgram', block: Any, g: BaseGraph) -> tuple[dict[Any, tuple[float, float, float]],
+                                                                         tuple[float, float]]:
+    """Where each boundary of ``g`` (a rewritten block) is: the same wire end of the block's cut diagram; and
+    the times of the block's inputs and outputs (one tick before its first timestep, one after its last)."""
+    from .subdiagram import get_logical_qubit
+
+    cut = program._without_classical(program._subdiagram(set(block.stages)))
+    cpos = _positions(cut, program.topology)
+    lo, hi = time_extent(cut) or (0, 0)
+    ends = {('in', get_logical_qubit(cut, b)): cpos[b] for b in cut.inputs()}
+    ends.update({('out', get_logical_qubit(cut, b)): cpos[b] for b in cut.outputs()})
+    fixed = {}
+    for side, boundaries in (('in', g.inputs()), ('out', g.outputs())):
+        for b in boundaries:
+            key = (side, get_logical_qubit(g, b))
+            if key in ends:
+                fixed[b] = ends[key]
+    return fixed, (float(lo - 1), float(hi + 1))
+
+
+def _between_wire_ends(g: BaseGraph, fixed: dict[Any, tuple[float, float, float]],
+                       times: tuple[float, float]) -> dict[Any, tuple[float, float, float]]:
+    """Every vertex not in ``fixed`` over the wire ends nearest to it, at a time set by its distances to the ends.
+
+    ``fixed`` are the block's boundaries (inputs at ``times[0]``, outputs at
+    ``times[1]``). A spider's ``(x, y)`` is the average of the positions of the
+    boundaries at the least number of edges from it; its time divides the block
+    in the ratio of its distances to the nearest input and the nearest output.
+    Spiders that would coincide are moved apart in time by a quarter tick.
+    """
+    from collections import deque
+
+    def distances(sources: list[Any]) -> dict[Any, tuple[int, set[Any]]]:
+        """Least number of edges from ``sources`` to every vertex, and which sources are that near."""
+        out: dict[Any, tuple[int, set[Any]]] = {b: (0, {b}) for b in sources}
+        queue = deque(sources)
+        while queue:
+            v = queue.popleft()
+            d, near = out[v]
+            for u in g.neighbors(v):
+                if u not in out:
+                    out[u] = (d + 1, set(near))
+                    queue.append(u)
+                elif out[u][0] == d + 1:
+                    out[u][1].update(near)
+        return out
+
+    ins = [b for b in g.inputs() if b in fixed]
+    outs = [b for b in g.outputs() if b in fixed]
+    from_in, from_out = distances(ins), distances(outs)
+    t0, t1 = times
+    centre = tuple(sum(p[i] for p in fixed.values()) / len(fixed) for i in range(3)) if fixed else (0.0, 0.0, 0.0)
+    pos = dict(fixed)
+    free = [v for v in g.vertices() if v not in fixed]
+    for v in free:
+        din, near_in = from_in.get(v, (None, set()))
+        dout, near_out = from_out.get(v, (None, set()))
+        if din is None and dout is None:            # not connected to the block's wires
+            pos[v] = (centre[0], centre[1], (t0 + t1) / 2)
+            continue
+        least = min(d for d in (din, dout) if d is not None)
+        near = (near_in if din == least else set()) | (near_out if dout == least else set())
+        x = sum(fixed[b][0] for b in near) / len(near)
+        y = sum(fixed[b][1] for b in near) / len(near)
+        if din is not None and dout is not None:
+            frac = din / (din + dout)
+        elif din is not None:                         # no output reachable: towards the end, never at it
+            frac = din / (din + 1)
+        else:
+            frac = 1 / (dout + 1)                     # type: ignore[operator]
+        pos[v] = (x, y, t0 + (t1 - t0) * frac)
+    groups: dict[tuple[float, float, float], list[Any]] = {}
+    for v in sorted(pos, key=lambda v: (v in fixed, v)):
+        groups.setdefault(tuple(round(c, 2) for c in pos[v]), []).append(v)
+    for members in groups.values():
+        movable = [v for v in members if v not in fixed]
+        shift = 0 if len(movable) == len(members) else 1
+        for k, v in enumerate(movable):
+            x, y, t = pos[v]
+            pos[v] = (x, y, t + 0.25 * (k + shift - (len(movable) - 1 + shift) / 2))
+    return pos
+    centre = np.mean(np.array(list(fixed.values()), dtype=float), axis=0) if fixed else np.zeros(3)
+    index = {v: i for i, v in enumerate(free)}
+    pull = 1e-3
+    a = np.eye(len(free)) * pull
+    b = np.tile(centre * pull, (len(free), 1))
+    for v in free:
+        i = index[v]
+        for u in g.neighbors(v):
+            a[i, i] += 1
+            if u in index:
+                a[i, index[u]] -= 1
+            else:
+                b[i] += fixed[u]
+    solved = np.linalg.solve(a, b)
+    for v in free:
+        pos[v] = tuple(float(c) for c in solved[index[v]])
+    groups: dict[tuple[float, float, float], list[Any]] = {}
+    for v in sorted(pos, key=lambda v: (v in fixed, v)):
+        groups.setdefault(tuple(round(c, 2) for c in pos[v]), []).append(v)
+    for members in groups.values():
+        movable = [v for v in members if v not in fixed]
+        shift = 0 if len(movable) == len(members) else 1
+        for k, v in enumerate(movable):
+            x, y, t = pos[v]
+            pos[v] = (x, y, t + 0.25 * (k + shift - (len(movable) - 1 + shift) / 2))
+    return pos

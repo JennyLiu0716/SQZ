@@ -19,7 +19,10 @@
   ZX-diagram on demand and the sub-diagram of any stage or block;
 * :class:`LevelManager` / :class:`Block` -- hierarchical *level-up* of
   consecutive stages into blocks (a syndrome-extraction round, a logical gate)
-  and merging of blocks separated only by stages on other qubits;
+  and merging of blocks separated only by stages on other qubits; a level-up can
+  also rewrite the block it makes (``rewrite='gpf'``, ``'full_reduce'``, ...;
+  :meth:`QProgram.reduced_block`, :meth:`QProgram.reduced_level` for a whole level,
+  :mod:`~zxqec.qprogram.rewrites`);
 * :class:`ParityControlled` -- a correction applied when the XOR of some
   measurement outcomes is 1 (feed-forward), kept symbolic in the diagram;
 * :func:`program_from_stim` -- a program from a circuit in Stim's text format;
@@ -40,6 +43,7 @@ from .distance import (CircuitDistance, Fault, NotCliffordError, NotPhaseFreeErr
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage
+from .rewrites import REWRITES, ReducedBlock, ReducedLevel, register_rewrite
 from .stim_text import StimCircuit, parse_stim, program_from_stim
 
 __all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled',
@@ -47,4 +51,4 @@ __all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled',
            'BlockComparison', 'ProgramComparison', 'compare_programs',
            'DeclaredDetector', 'DetectorCheck', 'check_detectors',
            'CircuitDistance', 'Fault', 'NotCliffordError', 'NotPhaseFreeError', 'TRemovalError', 'circuit_distance',
-           'without_gates', 'z_distance_through_t']
+           'without_gates', 'z_distance_through_t', 'REWRITES', 'ReducedBlock', 'ReducedLevel', 'register_rewrite']

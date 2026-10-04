@@ -92,6 +92,18 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   qubit changes the code), and the thesis's mis-wired fold-transversal H, whose codes and logical
   operations are all correct and which only the lost detectors (24 against 22) reveal, located in
   the round with the wrong check. Ends with what the comparison does not show.
+- [LevelUpWithRewrites.ipynb](LevelUpWithRewrites.ipynb) — simplification during level-up: blocks that
+  carry a rewrite (`'gpf'`, `'full_reduce'`, ...), the rewritten diagram built from the children's
+  rewritten diagrams (`reduced_block`; a whole level, `reduced_level`), the fold-transversal Hadamard and d = 3 cultivation reduced
+  block by block with the same result as at once, and the levels window (`view_levels`, and
+  `view_levels_3d` with the program in 3D).
+- [interactive_levels.py](interactive_levels.py) — the levels window: a slider over the levels, the
+  selected block outlined in the program with the blocks it was made from dashed, the program as the
+  level rewrites it (every block replaced by its rewritten diagram), and the block's diagram after
+  its rewrite; drag a spider to pull overlapping labels apart, or *spread out block* for PyZX's
+  force-directed layout; `--3d` draws the program and the level in 3D (`view_levels_3d`; the spiders
+  of a rewritten block laid out between the ends of its wires), to be turned with the mouse
+  (`python examples/interactive_levels.py [--cultivation] [--3d] [--save FILE]`).
 - [DecomposingTerms.ipynb](DecomposingTerms.ipynb) — a block as a sum of terms, one for each value of its
   hidden spiders (`decompose_terms`, L. Yeh's decomposition), and what each term does to each qubit and
   to X, Y, Z errors. On the d = 3 cultivation double-check the terms depend on how the hidden bit is
