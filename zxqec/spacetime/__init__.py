@@ -25,6 +25,9 @@ data, ASAP scheduling, ``time_slice``):
   block shading) and :func:`draw_program_3d` / :func:`draw_graph_3d` (2D space
   + 1D time) with matplotlib, for scripts and static figures; :func:`draw_level_3d`
   for the program as a level rewrites it;
+* :mod:`~zxqec.spacetime.relax` -- :func:`relax_layout`, :func:`draw_relaxed` and
+  :func:`draw_relaxed_3d`: a diagram laid out where a physical energy is lowest
+  (Kamada-Kawai springs or a force simulation, with ``networkx``), no coordinates given;
 * :mod:`~zxqec.spacetime.web` -- the same views as interactive JavaScript
   widgets for notebooks (:func:`draw_web`, :func:`draw_program_web`),
   built on PyZX's d3 and three.js viewers;
@@ -42,6 +45,7 @@ from .drawing import (VIEWS, draw_graph_3d, draw_level_3d, draw_program, draw_pr
 from .topology import Topology
 from .web import draw_program_web, draw_web
 from .levels_view import LevelsView, LevelsView3D, view_levels, view_levels_3d
+from .relax import RELAX_METHODS, draw_relaxed, draw_relaxed_3d, relax_layout
 
 __all__ = [
     'Topology',
@@ -52,4 +56,5 @@ __all__ = [
     'draw_level_3d', 'level_layout_3d',
     'draw_web', 'draw_program_web',
     'view_levels', 'LevelsView', 'view_levels_3d', 'LevelsView3D',
+    'relax_layout', 'draw_relaxed', 'draw_relaxed_3d', 'RELAX_METHODS',
 ]

@@ -111,6 +111,10 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   on every qubit (Y with S for T). The check for distance: every term maps each Pauli error to the same
   Pauli, up to a sign; it fails with real T and passes with S, while single-qubit Clifford terms are not
   enough. Also the fold-transversal H's blocks and the d = 5 double-checks.
+- [RelaxedLayouts.ipynb](RelaxedLayouts.ipynb) — diagrams laid out where a physical energy is lowest,
+  with no coordinates given (`relax_layout`, `draw_relaxed`, `draw_relaxed_3d`; Kamada-Kawai springs or a
+  force simulation, with networkx): the first checks and the double-check of d = 3 cultivation as
+  reduced, and the whole fold-transversal Hadamard (`pip install zxqec[layout]`).
 - [DistanceChecking.ipynb](DistanceChecking.ipynb) — L. Yeh's distance-checking pipeline (`check_distance`):
   the stages cut by gate type, the circuit distance of every Clifford run, and the non-Clifford stages
   grouped and checked term by term. On d = 3 cultivation the double-check fails the check, as its fault
