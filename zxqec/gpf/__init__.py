@@ -40,7 +40,7 @@ from .gadgets import phase_polynomial, simplify_gadgets
 from .hadamard import (BOUNDARY_HADAMARD_KEY, has_boundary_hadamard, push_hadamards_to_boundary,
                        restore_boundary_hadamards)
 from .matrix import SplitMatrix, apply_matrix, change_variables, reduce_rows, split_matrix
-from .normal_form import GPF_ROLE_KEY, LEAF, is_gpf, is_leaf, is_stem, layout_gpf, to_gpf
+from .normal_form import GPF_ROLE_KEY, LEAF, is_gpf, is_leaf, is_stem, layout_gpf, to_gpf, to_gpf_steps
 from .reduce import (GPFResult, boolean_variables, consistent_assignments, constraint_system, detector_rank,
                      equal_for_all_assignments, evaluate_phase, phases_modulo, reduce_gpf, reduce_modulo,
                      same_map, sample_consistent_assignment, unsatisfiable)
@@ -48,7 +48,7 @@ from .report import Measurement, MeasurementReport, measurement_report
 from .terms import Decomposition, Part, Piece, Term, decompose_terms
 
 __all__ = [
-    'to_gpf', 'is_gpf', 'is_leaf', 'is_stem', 'layout_gpf', 'GPF_ROLE_KEY', 'LEAF',
+    'to_gpf', 'to_gpf_steps', 'is_gpf', 'is_leaf', 'is_stem', 'layout_gpf', 'GPF_ROLE_KEY', 'LEAF',
     'SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'change_variables',
     'reduce_gpf', 'GPFResult', 'equal_for_all_assignments', 'boolean_variables', 'evaluate_phase',
     'sample_consistent_assignment', 'consistent_assignments', 'same_map', 'constraint_system',

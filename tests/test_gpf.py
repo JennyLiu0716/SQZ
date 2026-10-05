@@ -472,3 +472,36 @@ def test_layout_gpf_puts_the_layers_side_by_side():
     for leaf in (v for v in d.vertices() if is_leaf(d, v)):
         (hub,) = list(d.neighbors(leaf))
         assert d.qubit(leaf) == d.qubit(hub) and d.row(leaf) > d.row(hub)
+
+
+def test_to_gpf_steps_records_the_steps_of_to_gpf():
+    # the diagram after each step of to_gpf: the first is the input, the last to_gpf's result, and every one is the
+    # same map (up to a scalar)
+    import pyzx as zx
+    from pyzx.circuit import Circuit
+    from pyzx.circuit.gates import CNOT, HAD, T
+    from zxqec.gpf import to_gpf, to_gpf_steps
+    c = Circuit(3)
+    for g in (HAD(0), CNOT(0, 1), T(1), CNOT(1, 2), HAD(2), CNOT(0, 2)):
+        c.add_gate(g)
+    g = c.to_graph()
+    steps = to_gpf_steps(g)
+    assert [what for what, _ in steps][0] == 'the diagram' and len(steps) == 6
+    final, direct = steps[-1][1], to_gpf(g)
+    assert final.num_vertices() == direct.num_vertices() and final.num_edges() == direct.num_edges()
+    assert all(zx.compare_tensors(h, g, preserve_scalar=False) for _, h in steps)
+
+
+def test_reduce_gpf_of_a_reduced_diagram():
+    # A reduced diagram carries the gadget roles of its reduction. Reducing it again first removes every phase-free
+    # hub of degree two and fuses its leaf with the spider the hub read, which must not stay marked as a leaf: to_gpf
+    # drops the old roles. The result is the same map on every run its detectors allow
+    from .programs import steane_t_injection
+    c = Circuit(2)
+    for gate in (T(0), CNOT(0, 1), T(1)):
+        c.add_gate(gate)
+    for g in (reduce_gpf(c.to_graph()).to_graph(), steane_t_injection().logical_action().graph):
+        assert any(is_leaf(g, v) for v in g.vertices())
+        res = reduce_gpf(g)
+        assert is_gpf(res.graph) and not res.is_zero
+        assert equal_for_all_assignments(g, res.to_graph(), constraints=res.detectors)

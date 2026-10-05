@@ -24,6 +24,8 @@ Both views are matplotlib figures (matplotlib is imported lazily):
   qubit in a :class:`~zxqec.spacetime.Topology` and ``t`` its timestep, ZX
   edges as lines, the hardware connectivity drawn faintly on the first and
   last time layer, and the blocks of a level as translucent slabs;
+* :func:`draw_slice`, :func:`draw_slices`, :func:`draw_program_slices` -- one time
+  step (or height) of the 2+1D view, flat in the xy-plane, with PyZX's drawing;
 * :func:`draw_level_3d` / :func:`level_layout_3d` -- the same for the program
   as a level rewrites it: blocks without a rewrite where they are in space-time,
   the spiders of a rewritten block laid out between the ends of its wires.
@@ -39,6 +41,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from pyzx.graph.base import BaseGraph, VT, ET
 from pyzx.spacetime import get_timestep, time_extent
 from pyzx.utils import EdgeType, VertexType, phase_to_s
@@ -48,7 +51,8 @@ from .topology import Topology
 if TYPE_CHECKING:
     from ..qprogram.program import QProgram
 
-__all__ = ['draw_program', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views',
+__all__ = ['draw_program', 'draw_graph', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views',
+           'slice_vertices', 'draw_slice', 'draw_slices', 'draw_program_slices',
            'draw_level_3d', 'level_layout_3d', 'block_colors', 'VIEWS', 'time_positions']
 
 #: Named viewpoints ``(elev, azim)`` for the 3D view: ``default`` is oblique,
@@ -216,6 +220,28 @@ def draw_program(program: 'QProgram', level: int | None = None, *,
                 lo = ranges[0][0]
                 x0 = lo - 0.5 if time_axis else _row_span(g, program, lo, lo)[0]
                 ax.text(x0 + 0.1, ymax - 0.15, label, fontsize=7, color=color, va='top')
+    return _finish(fig)
+
+
+def draw_graph(g: BaseGraph[VT, ET], *, time_axis: bool = True, show_time: bool = True, **kwargs: Any) -> Any:
+    """PyZX's 2D drawing (``draw_matplotlib``) of a time-annotated diagram, time along the horizontal axis.
+
+    The static counterpart of :func:`~zxqec.spacetime.draw_web`, for any diagram
+    (a stage or block cut out of a program, a reduced diagram): every spider at its
+    timestep (see :func:`time_positions`; ``time_axis=False`` keeps PyZX's rows), and
+    with ``show_time`` PyZX's timestep labels and squiggly delays. Keyword arguments
+    go to ``draw_matplotlib`` (e.g. ``figsize``, ``labels``). Returns the figure.
+    """
+    from pyzx.drawing import draw_matplotlib
+    from pyzx.utils import get_mode, settings
+
+    h = _time_layout(g) if time_axis else g
+    mode = get_mode()
+    settings.mode = "notebook"                # PyZX would call plt.show() itself otherwise
+    try:
+        fig = draw_matplotlib(h, show_time=show_time, **kwargs)
+    finally:
+        settings.mode = mode
     return _finish(fig)
 
 
@@ -480,6 +506,139 @@ def draw_program_3d(program: 'QProgram', level: int | None = None, classical: bo
     blocks = _block_tick_ranges(program, level) if level is not None else None
     g = program.graph() if classical else program.quantum_graph()
     return draw_graph_3d(g, program.topology, blocks=blocks, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# slices: one time step (or one height) of a 2+1D drawing, flat
+# ---------------------------------------------------------------------------
+
+def slice_vertices(g: BaseGraph[VT, ET], *, t: int | None = None, z: float | tuple[float, float] | None = None,
+                   positions: dict[Any, tuple[float, float, float]] | None = None,
+                   topology: Topology | None = None) -> list[Any]:
+    """The vertices in one slice of a 2+1D drawing: the spiders at timestep ``t``, or at height ``z``.
+
+    ``z`` is a height (within a quarter of a unit) or a range ``(low, high)`` of
+    heights, of the positions :func:`draw_graph_3d` uses (``positions`` overriding
+    some of them, as in :func:`draw_level_3d`).
+    """
+    if (t is None) == (z is None):
+        raise ValueError("give either a timestep t or a height z")
+    if t is not None:
+        return [v for v in g.vertices() if g.type(v) != VertexType.BOUNDARY and get_timestep(g, v) == t]
+    pos = _positions(g, topology)
+    if positions:
+        pos.update({v: p for v, p in positions.items() if v in pos})
+    lo, hi = (z - 0.25, z + 0.25) if isinstance(z, (int, float)) else z
+    return [v for v in g.vertices() if lo <= pos[v][2] <= hi]
+
+
+def draw_slice(g: BaseGraph[VT, ET], topology: Topology | None = None, *, t: int | None = None,
+               z: float | tuple[float, float] | None = None,
+               positions: dict[Any, tuple[float, float, float]] | None = None, show_topology: bool = True,
+               extent: Any = None, title: str | None = None, figsize: tuple[float, float] = (4, 4),
+               **kwargs: Any) -> Any:
+    """One slice of the 2+1D view, flat: the spiders at timestep ``t`` (or height ``z``) at their ``(x, y)``.
+
+    The spiders of :func:`slice_vertices`, with the edges between them, are drawn
+    by PyZX's own ``draw_matplotlib`` at the positions :func:`draw_graph_3d` gives
+    them in the plane (a qubit's place in ``topology``); edges to other time steps
+    are left out, so a layer of CNOTs shows which qubits it couples. With
+    ``show_topology`` the hardware graph is drawn faintly underneath. ``extent``,
+    ``((x0, x1), (y0, y1))``, fixes the window (by default the whole layout of
+    ``g``), so that slices of one diagram can be compared. Keyword arguments go to
+    ``draw_matplotlib``. Returns the figure.
+    """
+    from pyzx.drawing import draw_matplotlib
+    from pyzx.utils import get_mode, settings
+
+    keep = set(slice_vertices(g, t=t, z=z, positions=positions, topology=topology))
+    pos = _positions(g, topology)
+    if positions:
+        pos.update({v: p for v, p in positions.items() if v in pos})
+    h = g.clone()                                       # clone keeps the vertex numbers
+    h.remove_vertices([v for v in list(h.vertices()) if v not in keep])
+    h.set_inputs(())
+    h.set_outputs(())
+    for v in h.vertices():
+        h.set_row(v, pos[v][0])
+        h.set_qubit(v, -pos[v][1])                      # PyZX draws a vertex at (row, -qubit)
+    mode = get_mode()
+    settings.mode = "notebook"                          # PyZX would call plt.show() itself otherwise
+    try:
+        fig = draw_matplotlib(h, figsize=figsize, **kwargs)
+    finally:
+        settings.mode = mode
+    ax = fig.axes[0]
+    if show_topology and topology is not None:
+        for a, b in topology.edge_list():
+            ca, cb = topology.coordinates(a), topology.coordinates(b)
+            ya = ca[1] if topology.dimension >= 2 else 0.0
+            yb = cb[1] if topology.dimension >= 2 else 0.0
+            ax.plot([ca[0], cb[0]], [ya, yb], color='gray', alpha=0.35, linewidth=0.8, zorder=0)
+    if extent is None and pos:
+        extent = _space_extent(pos)
+    if extent is not None:
+        (x0, x1), (y0, y1) = extent
+        ax.set_aspect('equal', adjustable='box')        # PyZX's axes adjust their limits instead
+        ax.set_xlim(x0 - 0.5, x1 + 0.5)
+        ax.set_ylim(y0 - 0.5, y1 + 0.5)
+    ax.set_title(title if title is not None else ('t = {}'.format(t) if t is not None else 'height {}'.format(z)),
+                 fontsize=9)
+    return _finish(fig)
+
+
+def draw_slices(g: BaseGraph[VT, ET], topology: Topology | None = None, ticks: Sequence[int] | None = None, *,
+                cols: int = 4, panel: tuple[float, float] = (3, 3), **kwargs: Any) -> Any:
+    """The slices of ``g`` at the timesteps ``ticks`` (by default every occupied one), side by side.
+
+    Each panel is :func:`draw_slice` (PyZX's drawing, rendered to an image), all
+    with the same window; ``cols`` panels per row, each ``panel`` inches. Keyword
+    arguments go to :func:`draw_slice`. Returns the figure.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    if ticks is None:
+        ticks = sorted({get_timestep(g, v) for v in g.vertices()
+                        if g.type(v) != VertexType.BOUNDARY and get_timestep(g, v) is not None})
+    ticks = list(ticks)
+    extent = kwargs.pop('extent', None) or _space_extent(_positions(g, topology))
+    images = []
+    for t in ticks:
+        f = draw_slice(g, topology, t=t, extent=extent, figsize=panel, **kwargs)
+        f.dpi = 110
+        canvas = FigureCanvasAgg(f)
+        canvas.draw()
+        images.append(np.asarray(canvas.buffer_rgba()).copy())
+        plt.close(f)
+    cols = max(1, min(cols, len(ticks)))
+    rows = max(1, -(-len(ticks) // cols))
+    fig = plt.figure(figsize=(panel[0] * cols, panel[1] * rows))
+    for k, img in enumerate(images):
+        ax = fig.add_subplot(rows, cols, k + 1)
+        ax.imshow(img)
+        ax.set_axis_off()
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.02, hspace=0.02)
+    return _finish(fig)
+
+
+def draw_program_slices(program: 'QProgram', stage: int | None = None, ticks: Sequence[int] | None = None,
+                        **kwargs: Any) -> Any:
+    """:func:`draw_slices` of a program's master graph: the timesteps of one ``stage``, or ``ticks``, or all.
+
+    Each panel shows what happens at one time step, on the program's topology.
+    Keyword arguments go to :func:`draw_slices`. Returns the figure.
+    """
+    g = program.quantum_graph()
+    if stage is not None:
+        if ticks is not None:
+            raise ValueError("give a stage or ticks, not both")
+        program.graph()                                 # makes sure the stage ticks are known
+        span = program.stage(stage).ticks
+        if span is None:
+            raise ValueError("stage {} takes no time".format(stage))
+        ticks = range(span[0], span[1] + 1)
+    return draw_slices(g, program.topology, ticks, **kwargs)
 
 
 # ---------------------------------------------------------------------------

@@ -51,9 +51,9 @@ from pyzx.rewrite_rules import bialgebra, check_bialgebra
 from pyzx.simplify import hopf_simp, id_simp, spider_simp
 from pyzx.utils import EdgeType, VertexType, is_pauli, toggle_vertex
 
-from .hadamard import push_hadamards_to_boundary
+from .hadamard import push_hadamards_to_boundary, restore_boundary_hadamards
 
-__all__ = ['GPF_ROLE_KEY', 'LEAF', 'to_gpf', 'is_leaf', 'is_stem', 'is_gpf', 'layout_gpf', 'skeleton_count']
+__all__ = ['GPF_ROLE_KEY', 'LEAF', 'to_gpf', 'to_gpf_steps', 'is_leaf', 'is_stem', 'is_gpf', 'layout_gpf', 'skeleton_count']
 
 GPF_ROLE_KEY = 'gpf'
 LEAF = 'leaf'
@@ -105,24 +105,60 @@ def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     and touch no input when step 3 starts (:func:`skeleton_count`), which every
     application lowers. Exceeding it raises ``RuntimeError``, which with the
     default bound means a bug.
+
+    Gadget roles already marked on ``g`` (:data:`GPF_ROLE_KEY`), for example on
+    the result of an earlier reduction, are dropped and found again in step 2:
+    step 1 can remove a gadget's hub and fuse its leaf into another spider.
     """
+    return _to_gpf(g, isolate_paulis, max_steps, cz_gadgets, None)
+
+
+def to_gpf_steps(g: BaseGraph[VT, ET], isolate_paulis: bool = False, max_steps: int | None = None,
+                 cz_gadgets: bool = True) -> list[tuple[str, BaseGraph[VT, ET]]]:
+    """The steps of :func:`to_gpf` on ``g``: ``[(what was done, a copy of the diagram after it)]``.
+
+    The first entry is ``g`` itself and the last is ``to_gpf(g)``. Each is recorded
+    with the Hadamards pushed to the boundary so far put back as Hadamard edges
+    (:func:`~zxqec.gpf.hadamard.restore_boundary_hadamards`), so every one is the same
+    map as ``g``; the diagrams keep the positions of the spiders they come from, so
+    they can be drawn one after the other (e.g. with ``zx.draw_matplotlib``). The
+    steps are the same code as :func:`to_gpf`, recorded on the way.
+    """
+    steps: list[tuple[str, BaseGraph[VT, ET]]] = [('the diagram', g.copy())]
+    _to_gpf(g, isolate_paulis, max_steps, cz_gadgets, steps)
+    return steps
+
+
+def _to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool, max_steps: int | None, cz_gadgets: bool,
+            record: list[tuple[str, BaseGraph[VT, ET]]] | None) -> BaseGraph[VT, ET]:
+    def note(what: str) -> None:
+        if record is not None:                         # the boundary Hadamards as edges: the same map as g
+            record.append((what, restore_boundary_hadamards(h)))
+
     h = g.copy()
     for v in h.vertices():
         if h.type(v) not in (VertexType.Z, VertexType.X, VertexType.BOUNDARY):
             raise ValueError("to_gpf: vertex {} has unsupported type {}".format(v, h.type(v)))
+        if h.vdata(v, GPF_ROLE_KEY, None) is not None:     # an earlier reduction's role: step 1 may fuse a
+            h.set_vdata(v, GPF_ROLE_KEY, None)              # leaf into the spider its hub read
     _presimplify(h)                       # identities and same-colour pairs first: they can
+    note('identity spiders removed, neighbours of the same colour fused')
     push_hadamards_to_boundary(h, cz_gadgets)   # only shrink the cycle space Algorithm 1 solves
     spider_simp(h)
     h.remove_isolated_vertices()
+    note('Hadamard edges pushed to the boundary wires, spiders fused')
 
     _isolate_phases(h, isolate_paulis)
+    note('phases that are not Pauli moved onto gadgets')
     _reduce_skeleton(h, max_steps if max_steps is not None else skeleton_count(h))
+    note('the bialgebra rule applied until two layers remain')
     _pad_boundaries(h)
     _split_multi_boundary_spiders(h)
     layout_gpf(h)
     if not is_gpf(h):
         raise RuntimeError("to_gpf: the result is not in generalized parity form; "
                            "this is a bug, please report the input diagram")
+    note('one Z-spider per input and one X-spider per output: the normal form')
     return h
 
 

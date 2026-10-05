@@ -22,7 +22,8 @@ data, ASAP scheduling, ``time_slice``):
   data and :func:`induced_subdiagram`, which cuts any set of spiders out of a
   program graph as a valid ZX-diagram;
 * :mod:`~zxqec.spacetime.drawing` -- :func:`draw_program` (2D, time axis,
-  block shading) and :func:`draw_program_3d` / :func:`draw_graph_3d` (2D space
+  block shading), :func:`draw_graph` (the same for any diagram), :func:`draw_slice` /
+  :func:`draw_program_slices` (one time step of the 2+1D view, flat) and :func:`draw_program_3d` / :func:`draw_graph_3d` (2D space
   + 1D time) with matplotlib, for scripts and static figures; :func:`draw_level_3d`
   for the program as a level rewrites it;
 * :mod:`~zxqec.spacetime.relax` -- :func:`relax_layout`, :func:`draw_relaxed` and
@@ -40,8 +41,9 @@ from .subdiagram import (
     LOGICAL_QUBIT_KEY, STAGE_KEY, get_logical_qubit, get_stage, induced_subdiagram,
     set_logical_qubit, set_stage, shift_timesteps,
 )
-from .drawing import (VIEWS, draw_graph_3d, draw_level_3d, draw_program, draw_program_3d, draw_program_views,
-                      level_layout_3d)
+from .drawing import (VIEWS, draw_graph, draw_graph_3d, draw_level_3d, draw_program, draw_program_3d,
+                      draw_program_slices, draw_program_views, draw_slice, draw_slices, level_layout_3d,
+                      slice_vertices)
 from .topology import Topology
 from .web import draw_program_web, draw_web
 from .levels_view import LevelsView, LevelsView3D, view_levels, view_levels_3d
@@ -52,7 +54,8 @@ __all__ = [
     'STAGE_KEY', 'LOGICAL_QUBIT_KEY',
     'get_stage', 'set_stage', 'get_logical_qubit', 'set_logical_qubit',
     'shift_timesteps', 'induced_subdiagram',
-    'draw_program', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views', 'VIEWS',
+    'draw_program', 'draw_graph', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views', 'VIEWS',
+    'slice_vertices', 'draw_slice', 'draw_slices', 'draw_program_slices',
     'draw_level_3d', 'level_layout_3d',
     'draw_web', 'draw_program_web',
     'view_levels', 'LevelsView', 'view_levels_3d', 'LevelsView3D',

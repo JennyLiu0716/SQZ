@@ -1,9 +1,11 @@
 # Examples
 
-The notebooks draw the 2D views with PyZX's interactive JavaScript viewer (`zx.draw`, `draw_web`,
-`draw_program_web`): open them in Jupyter to drag spiders and zoom (the viewer loads d3 from a CDN).
-The 3D views use matplotlib (`draw_program_3d`). GitHub's notebook preview does not
-run JavaScript, so the figures only show there if you re-execute with the matplotlib functions.
+Every notebook starts with a short *In short* for readers without a background in quantum error
+correction: the setting, the question, the answer, and how to read the pictures. The pictures are
+static drawings made by library functions (`draw_program`, `draw_graph`, `draw_program_slices`,
+`draw_relaxed`, `draw_program_3d`, PyZX's `draw_matplotlib`), so they all show on GitHub. The
+interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_program_web` in Jupyter
+(drag spiders, zoom; the viewer loads d3 from a CDN), and the scripts below in a window.
 
 - [QProgramBasics.ipynb](QProgramBasics.ipynb) — building a `QProgram` from stages,
   the master space-time graph, the time-axis and 2+1D views, level-up and block
@@ -13,12 +15,14 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   then rotate with the mouse (left-drag), zoom (scroll / right-drag), pan (middle-drag),
   or click the `default` / `top` / `front` / `side` buttons to turn to those viewpoints.
 
-- [FoldTransversalHadamard.ipynb](FoldTransversalHadamard.ipynb) — thesis case study 1
-  re-verified with syndrome *measurement* instead of post-selection: the 19-qubit
+- [FoldTransversalHadamard.ipynb](FoldTransversalHadamard.ipynb) — a fold-transversal logical
+  Hadamard verified with syndrome *measurement*, outcomes kept symbolic: the 19-qubit
   fold-transversal logical Hadamard on the distance-3 surface code as a `QProgram`,
   reduced with `zxqec.gpf` to a Hadamard plus an outcome-dependent Pauli frame and
-  24 detectors; all-zero outcomes give exactly `H`. Circuits in `circuits/ft_h/` (with a
-  wiring error of the thesis files corrected -- the symbolic reduction found it).
+  24 detectors; all-zero outcomes give exactly `H`. Drawn level by level: the physical circuit,
+  each stage time step by time step on the layout of the qubits, and the logical Hadamard.
+  Circuits in `circuits/ft_h/` (with a wiring error of an earlier version corrected -- the
+  symbolic reduction found it).
 - [TInjectionWalkthrough.ipynb](TInjectionWalkthrough.ipynb) — **start here.** The running example
   of the paper, for a reader with no error-correction background: the ideas first (Pauli operators,
   codes, stabilizers, transversal gates, injection) with pictures, then the three questions answered
@@ -33,7 +37,7 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   them only once the layer of T gates is simplified as a whole; `check_detectors` reports each declared one as
   deterministic, not deterministic with two runs as evidence, or unknown), reads the double-check as a logical
   measurement in the basis {T†|+⟩, T†|−⟩}, and shows that every noiseless run prepares T†|+⟩ up to a
-  Pauli correction. Part 4 draws the reduction step by step, as the thesis did (the circuit, the
+  Pauli correction. Part 4 draws the reduction step by step (the circuit, the
   normal form with 15 T-type gadgets, the same gadgets in the code's variables as in block
   form, one T† gadget, and T†|+⟩ fed into the encoder of the colour code), and checks every picture against the circuit by tensor contraction in all 32 runs the
   detectors allow. The pictures are PyZX's own drawings (`zx.draw_matplotlib`) of the library's
@@ -89,9 +93,12 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   the same codes, the same logical operations up to a Pauli frame, and the same detectors. Four
   variants of the Steane T injection (Z checks measured first and `S` instead of `S†` in the
   correction are equivalent; no correction changes the logical action; a check wired to the wrong
-  qubit changes the code), and the thesis's mis-wired fold-transversal H, whose codes and logical
+  qubit changes the code), and a mis-wired fold-transversal H, whose codes and logical
   operations are all correct and which only the lost detectors (24 against 22) reveal, located in
-  the round with the wrong check. Ends with what the comparison does not show.
+  the round with the wrong check. It starts with how PyZX writes a measurement and a fed-forward
+  gate (a spider whose phase is the outcome), draws both programs and the stages where they differ,
+  shows the ZX diagram after each step of the reduction inside the comparison (`to_gpf_steps`), and
+  ends with how long it takes, and why, and what the comparison does not show.
 - [LevelUpWithRewrites.ipynb](LevelUpWithRewrites.ipynb) — simplification during level-up: blocks that
   carry a rewrite (`'gpf'`, `'full_reduce'`, ...), the rewritten diagram built from the children's
   rewritten diagrams (`reduced_block`; a whole level, `reduced_level`), the fold-transversal Hadamard and d = 3 cultivation reduced
@@ -138,7 +145,10 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   protocol as a 20-qubit `QProgram`; level-up into the logical operations with a measurement report
   per block, showing checks that are meaningless in a block alone and deterministic once it is
   merged; and the result, `T` when the logical readout is 0 and `S†T` when it is 1, always inside
-  the code space.
+  the code space. The injection is first shown on two qubits in ZX, as in PyZX's
+  `demos/BooleanRewrites.ipynb` (the outcome cancels under push-Pauli and fusion); with the
+  correction added (`ParityControlled`), the levelled-up 20-qubit protocol reduces to the same
+  one-gadget diagram, `T` in every run.
 - [TrackingOutcomeVariables.ipynb](TrackingOutcomeVariables.ipynb) — why a reduced diagram shows
   only 8 of the 34 measurement outcomes, although each occurs once in the circuit. A one-gate example
   where the same measurement both keeps and loses its variable, the character-sum rule behind it, the
@@ -149,11 +159,11 @@ run JavaScript, so the figures only show there if you re-execute with the matplo
   enumerating all 32 possible patterns. Uses [track_variable.py](track_variable.py), a tracer that
   wraps the rewrite appliers for the duration of a `with tracing(name)` block.
 - [interactive_fold_h_3d.py](interactive_fold_h_3d.py) — the 2+1D view of that protocol
-  in an interactive window, on the thesis layout of the 19 qubits:
+  in an interactive window, on the layout of the 19 qubits:
   `python examples/interactive_fold_h_3d.py [top|front|side]` for the whole protocol
   (`--level 2` shades its five phases instead of the nine stages), `--stage I` or
   `--block LEVEL I` for one stage or block only, `--phases` to label the spiders with
-  their phases, `--miswired` for the wiring error of the thesis's circuit files
-  (`ComparingPrograms.ipynb`, Part 2), `--save FILE` to write the figure instead of opening a window.
+  their phases, `--miswired` for the wiring error of an earlier version of the circuit files
+  (`ComparingPrograms.ipynb`, Part 3), `--save FILE` to write the figure instead of opening a window.
 
 Planned: magic state distillation; cultivation at larger distances.
