@@ -79,7 +79,10 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   the runs, `--log FILE`. All 1024 are equal.
 - [StabilizerCodes.ipynb](StabilizerCodes.ipynb) — the three questions for codes that are not CSS. The
   [[5,1,3]] code read off a ring of `CZ` gates (its stabilizers mix `X` and `Z`); its ideal encoder, built
-  from the Choi state following Yeh et al., checked with numpy against its definition; a program that
+  from the Choi state following Yeh et al., checked with numpy against its definition, and drawn
+  after PyZX's spider rules as the ring graph code (five qubits in a ring of CZs, the input copied
+  onto all five), and in the isometry AP normal form of Yeh et al. (`iap_normal_form`: a Clifford
+  on the inputs, a CSS core, a diagonal Clifford on the outputs); a program that
   encodes, measures the checks and applies `H` then `S` on every qubit, which the tool finds to be the
   logical `SH`, transversal and keeping the code; `H` on every qubit, which leaves it; the Steane code
   after one `S` and its logical `H`; and what is not covered (a code that differs between runs).
