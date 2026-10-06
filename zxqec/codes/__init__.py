@@ -19,13 +19,16 @@
   logical operators (:class:`StabilizerCode`);
 * :class:`PauliString` -- a Pauli operator with a possibly symbolic sign;
 * :func:`iap_normal_form` -- a Clifford isometry (such as a code's ideal
-  encoder) in isometry affine-with-phases normal form (:class:`IAPNormalForm`).
+  encoder) in isometry affine-with-phases normal form (:class:`IAPNormalForm`),
+  computed from :func:`reduced_ap_form`, the reduced AP form of its Choi state
+  (:class:`APForm`).
 """
 
 from .code import NotACodeError, OutcomeDependentCodeError, StabilizerCode, code_of
-from .iapnf import IAPNormalForm, iap_normal_form
+from .iapnf import APForm, IAPNormalForm, iap_normal_form, reduced_ap_form
 from .logical import Branch, LogicalAction, glue, logical_action
 from .pauli import PauliString, phase_sum
 
 __all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of', 'PauliString', 'phase_sum',
-           'logical_action', 'LogicalAction', 'Branch', 'glue', 'iap_normal_form', 'IAPNormalForm']
+           'logical_action', 'LogicalAction', 'Branch', 'glue', 'iap_normal_form', 'IAPNormalForm',
+           'reduced_ap_form', 'APForm']

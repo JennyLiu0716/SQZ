@@ -44,6 +44,22 @@ therefore checks the condition under which the logical action is the
 operation on the logical qubits: the block maps the code before it into the
 code after it. A block that fails is reported as leaving the code, not as a
 gate.
+
+**Codes that are not CSS: through the isometry AP normal form.** Section 4.5
+of the thesis reduces any stabilizer code to the CSS case: the ideal encoder
+is ``E = U_O . C . U_I`` (:func:`~zxqec.codes.iap_normal_form`), a diagonal
+Clifford ``U_O`` after a phase-free CSS core ``C`` after a logical Clifford
+``U_I``. When a code is not CSS, the composite is built from these layers,
+
+    U_I^out^dag ; C_out^dag ; U_O^out^dag ; B ; U_O^in ; C_in ; U_I^in ,
+
+and when the block is diagonal (a layer of ``T`` gates, say) and both codes
+have the same ``U_O``, the two ``U_O`` cancel, since diagonal operators
+commute: the block is checked on the CSS core, exactly as for a CSS code, and
+``U_I`` only relabels the logical qubits. :meth:`LogicalAction.on_core` gives
+the action on the cores alone, before that relabelling. For CSS codes the
+ideal encoder is already its core, and the composite is built from it as
+before.
 """
 
 from __future__ import annotations
@@ -136,11 +152,12 @@ def _labelled_decoder(code: StabilizerCode) -> BaseGraph:
 # -- the logical action --------------------------------------------------------------------
 
 def logical_action(block: BaseGraph, code_in: StabilizerCode, code_out: StabilizerCode,
-                   context: Sequence[Any] = ()) -> 'LogicalAction':
+                   context: Sequence[Any] = (), via: str = 'auto') -> 'LogicalAction':
     """The logical action of ``block`` from ``code_in`` to ``code_out`` (see the module docstring).
 
     The block's input wires must be the qubits of ``code_in`` and its output
-    wires those of ``code_out``, matched by label. ``context`` holds detectors
+    wires those of ``code_out``, matched by label; a block whose wires carry no
+    labels (a diagram built by hand) is matched by position. ``context`` holds detectors
     of the program around the block, for example those of the whole program.
     Those that mention none of the block's own outcomes restrict the classes
     of runs to what the program can produce: an outcome measured before the
@@ -148,11 +165,118 @@ def logical_action(block: BaseGraph, code_in: StabilizerCode, code_out: Stabiliz
     is read as its value. Those that mention an outcome of the block are left
     out, so that the block is still analysed as a map of its own outcomes (a
     check whose outcome the program predicts is still a measurement).
+
+    ``via`` chooses the encoders: ``'encoder'`` the ideal encoders of
+    :meth:`StabilizerCode.encoder`, ``'iapnf'`` their isometry AP normal forms
+    (see the module docstring), ``'auto'`` (default) the normal forms when a code
+    is not CSS. Both give the same map; the normal forms cancel ``U_O`` when the
+    block is diagonal.
     """
-    composite = glue(glue(_labelled_encoder(code_in), block), _labelled_decoder(code_out))
+    if via not in ('auto', 'encoder', 'iapnf'):
+        raise ValueError("via must be 'auto', 'encoder' or 'iapnf', not {!r}".format(via))
+    block = _labelled_by_position(block, code_in, code_out)
     own = set(boolean_variables(block))
     outside = [d for d in context if hasattr(d, 'free_vars') and not ({v.name for v in d.free_vars()} & own)]
-    return LogicalAction(reduce_gpf(composite), code_in, code_out, composite, block=block, context=outside)
+    if via == 'encoder' or (via == 'auto' and code_in.is_css and code_out.is_css):
+        composite = glue(glue(_labelled_encoder(code_in), block), _labelled_decoder(code_out))
+        return LogicalAction(reduce_gpf(composite), code_in, code_out, composite, block=block, context=outside)
+    from .iapnf import iap_normal_form
+    nf_in, nf_out = iap_normal_form(code_in), iap_normal_form(code_out)
+    cancel = _same_u_o(nf_in, nf_out) and _is_diagonal(block)
+    composite = _through_normal_forms(block, nf_in, nf_out, u_i=True, u_o=not cancel)
+    return LogicalAction(reduce_gpf(composite), code_in, code_out, composite, block=block, context=outside,
+                         via='iapnf', normal_forms=(nf_in, nf_out), u_o_cancelled=cancel)
+
+
+def _labelled_by_position(block: BaseGraph, code_in: StabilizerCode, code_out: StabilizerCode) -> BaseGraph:
+    """``block`` itself if its wires are labelled; otherwise a copy labelled by position with the codes' qubits."""
+    wires = list(block.inputs()) + list(block.outputs())
+    if any(get_logical_qubit(block, b) is not None for b in wires):
+        return block
+    if len(block.inputs()) != code_in.n or len(block.outputs()) != code_out.n:
+        raise ValueError("an unlabelled block needs as many inputs as the code before it has qubits ({}) "
+                         "and as many outputs as the code after it ({})".format(code_in.n, code_out.n))
+    block = block.copy()
+    for b, q in zip(block.inputs(), code_in.qubits):
+        set_logical_qubit(block, b, q)
+    for b, q in zip(block.outputs(), code_out.qubits):
+        set_logical_qubit(block, b, q)
+    return block
+
+
+def _through_normal_forms(block: BaseGraph, nf_in: Any, nf_out: Any, u_i: bool, u_o: bool) -> BaseGraph:
+    """``block`` between the layers of two isometry AP normal forms (``U_I`` and ``U_O`` optional)."""
+    enc = nf_in.to_graph(u_i=u_i, u_o=u_o, labelled=True)
+    dec = nf_out.to_graph(u_i=u_i, u_o=u_o).adjoint()
+    for b, q in zip(dec.inputs(), nf_out.qubits):
+        set_logical_qubit(dec, b, q)
+    return glue(glue(enc, block), dec)
+
+
+def _same_u_o(nf_in: Any, nf_out: Any) -> bool:
+    """Whether two normal forms have the same ``U_O`` on the same labelled qubits."""
+    def u_o(nf: Any) -> tuple[Any, Any]:
+        lab = nf.qubits
+        return ({lab[q]: str(v) for q, v in nf.out_phases.items()},
+                {frozenset((lab[a], lab[b])) for a, b in nf.cz_out})
+    return set(nf_in.qubits) == set(nf_out.qubits) and u_o(nf_in) == u_o(nf_out)
+
+
+def _is_diagonal(block: BaseGraph) -> bool:
+    """A sufficient test that ``block`` is diagonal in the computational basis (so it commutes with ``U_O``).
+
+    Its inputs and outputs are the same labelled qubits, and its reduced
+    diagram is the identity skeleton with Z-phases: each input on a Z-spider
+    joined by a plain edge to the output X-spider of the same qubit, which has
+    no phase, and otherwise only Z-phase gadgets on those Z-spiders.
+    """
+    from ..gpf import is_leaf, is_stem
+    from pyzx.utils import VertexType
+    ins = [get_logical_qubit(block, b) for b in block.inputs()]
+    outs = [get_logical_qubit(block, b) for b in block.outputs()]
+    if None in ins or len(set(ins)) != len(ins) or set(ins) != set(outs):
+        return False
+    res = reduce_gpf(block)
+    if res.is_zero:
+        return False
+    g = res.to_graph()
+    zero = lambda p: str(p) == '0'
+    z_of: dict[Any, Any] = {}
+    for b, q in zip(g.inputs(), ins):
+        (w,) = list(g.neighbors(b))
+        if g.type(w) != VertexType.Z or g.edge_type(g.edge(b, w)) != EdgeType.SIMPLE:
+            return False
+        z_of[w] = q
+    x_of: dict[Any, Any] = {}
+    for b, q in zip(g.outputs(), outs):
+        (w,) = list(g.neighbors(b))
+        if (g.type(w) != VertexType.X or g.edge_type(g.edge(b, w)) != EdgeType.SIMPLE
+                or not zero(g.phase(w))):
+            return False
+        x_of[w] = q
+    bounds = set(g.inputs()) | set(g.outputs())
+    for v in g.vertices():
+        if v in bounds or v in z_of or v in x_of:
+            continue
+        if is_leaf(g, v):
+            if g.type(v) != VertexType.Z:
+                return False
+        elif is_stem(g, v) and g.type(v) == VertexType.X:
+            if any(u not in z_of and not is_leaf(g, u) for u in g.neighbors(v)):
+                return False
+        else:
+            return False
+    for w, q in x_of.items():
+        inner = [u for u in g.neighbors(w) if u not in bounds]
+        if len(inner) != 1 or z_of.get(inner[0]) != q or g.edge_type(g.edge(w, inner[0])) != EdgeType.SIMPLE:
+            return False
+    for z in z_of:
+        for u in g.neighbors(z):
+            if not (u in bounds or u in x_of or (is_stem(g, u) and g.type(u) == VertexType.X)):
+                return False
+            if g.edge_type(g.edge(z, u)) != EdgeType.SIMPLE:
+                return False
+    return True
 
 
 @dataclass
@@ -183,6 +307,25 @@ class LogicalAction:
     block: BaseGraph | None = field(default=None, repr=False)
     _stays: tuple[bool | None] | None = field(default=None, repr=False)
     context: list[Any] = field(default_factory=list, repr=False)  #: detectors on outcomes outside the block
+    via: str = 'encoder'                       #: 'encoder' or 'iapnf': how the composite was built
+    normal_forms: tuple[Any, Any] | None = field(default=None, repr=False)   #: (in, out), with 'iapnf'
+    u_o_cancelled: bool | None = None          #: with 'iapnf': the two U_O cancelled (diagonal block)
+    _core: Any = field(default=None, repr=False)
+
+    def on_core(self) -> 'LogicalAction':
+        """The block's action on the CSS cores alone: the composite without the ``U_I`` layers.
+
+        Only with ``via='iapnf'``. The logical action is this one with ``U_I^in``
+        before it and ``U_I^out^dagger`` after it; when ``U_O`` cancelled, it is
+        the check of the block on a CSS code, as in the thesis (Section 4.5).
+        """
+        if self.normal_forms is None or self.block is None:
+            raise ValueError("on_core needs a logical action computed via the isometry AP normal form")
+        if self._core is None:
+            nf_in, nf_out = self.normal_forms
+            g = _through_normal_forms(self.block, nf_in, nf_out, u_i=False, u_o=not self.u_o_cancelled)
+            self._core = LogicalAction(reduce_gpf(g), None, None, g, context=list(self.context))
+        return self._core
 
     def stays_in_code(self) -> bool | None:
         """Whether the block maps the code before it into the code after it (``None``: not checked).
@@ -460,6 +603,14 @@ class LogicalAction:
 
     def describe(self) -> str:
         lines = ["logical action: {} -> {} logical qubit(s)".format(self.k_in, self.k_out)]
+        if self.via == 'iapnf' and self.normal_forms is not None:
+            nf_in, nf_out = self.normal_forms
+            ui = lambda nf: 'empty' if not nf.hadamards else 'phases {}, CZ {}, H on {}, X-CZ {}'.format(
+                {q: str(v) for q, v in sorted(nf.in_phases.items())}, list(nf.cz_in), list(nf.hadamards),
+                list(nf.xcz_in))
+            lines.append("  through the isometry AP normal forms: {}; U_I before: {}; U_I after: {}".format(
+                "U_O cancelled (the block is diagonal), so the block is checked on the CSS core"
+                if self.u_o_cancelled else "U_O kept", ui(nf_in), ui(nf_out)))
         for b in self.branches():
             lines.append("  {}: {}{}".format(
                 b.when(), b.operation or 'not recognised',
