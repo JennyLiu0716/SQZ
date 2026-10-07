@@ -107,6 +107,30 @@ def _two_qubit_program(gates):
     return p
 
 
+def test_several_logical_qubits_each_get_their_observables():
+    # a Steane block (input on qubit 3) next to a bare qubit 7: transversal X on the block has circuit distance 3,
+    # but one gate on the bare qubit lets a single fault flip its logical
+    from pyzx.circuit import Circuit
+    from pyzx.circuit.gates import NOT
+
+    from .programs import steane_encoder
+    for bare_gate, expected in ((False, 3), (True, 1)):
+        p = QProgram(8, initial_states={q: '0' for q in range(7) if q != 3})
+        c = Circuit(8)
+        for g in steane_encoder(list(range(7))):
+            c.add_gate(g)
+        p.add_circuit(c)
+        c = Circuit(8)
+        for q in range(8 if bare_gate else 7):
+            c.add_gate(NOT(q))
+        p.add_circuit(c)
+        with pytest.raises(NotImplementedError, match='one logical qubit'):
+            circuit_distance(p, 1, 1)                      # by default
+        r = circuit_distance(p, 1, 1, several_logicals=True)
+        assert r.distance == expected
+        assert ('X', 'XX') in r.by_logical and ('Z', 'ZZ') in r.by_logical    # all inputs as X / Z, outputs per qubit
+
+
 def test_z_distance_through_t_refuses_when_removing_t_is_not_exact():
     from pyzx.circuit.gates import HAD, T, Measurement
     # T T turns |+> into |+i>: its X measurement is random, without the T gates it is fixed (a detector more)

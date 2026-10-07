@@ -505,3 +505,39 @@ def test_reduce_gpf_of_a_reduced_diagram():
         res = reduce_gpf(g)
         assert is_gpf(res.graph) and not res.is_zero
         assert equal_for_all_assignments(g, res.to_graph(), constraints=res.detectors)
+
+
+def test_copy_leaf_copies_a_measurement_result_and_refuses_what_the_rule_does_not_cover():
+    from zxqec.gpf import copy_leaf
+    # an X-leaf with phase c[0] on a Z-spider with three other legs: Z-measurement result c[0] of a copied qubit
+    g = Graph()
+    a = new_var('c[0]', True, g.var_registry)
+    ins = [g.add_vertex(VertexType.BOUNDARY, q, 0) for q in range(2)]
+    outs = [g.add_vertex(VertexType.BOUNDARY, q, 3) for q in range(2)]
+    z = g.add_vertex(VertexType.Z, 0, 1)
+    x = g.add_vertex(VertexType.X, 1, 1)
+    leaf = g.add_vertex(VertexType.X, 0, 2, a)
+    g.add_edges([(ins[0], z), (z, outs[0]), (z, x), (ins[1], x), (x, outs[1]), (z, leaf)])
+    g.set_inputs(tuple(ins))
+    g.set_outputs(tuple(outs))
+    h = g.clone()
+    new = copy_leaf(h, leaf)
+    assert set(new) == {ins[0], outs[0], x} and all(h.phase(u) == a and h.vertex_degree(u) == 1 for u in new.values())
+    assert equal_for_all_assignments(g, h)
+    # the X copy that reaches the CX target fuses with it
+    assert zx.rewrite_rules.fuse_rule.fuse(h, x, new[x]) and h.phase(x) == a
+    assert equal_for_all_assignments(g, h)
+    with pytest.raises(ValueError, match='one leg'):
+        copy_leaf(g.clone(), z)
+    k = g.clone()
+    k.set_phase(z, Fraction(1, 2))
+    with pytest.raises(ValueError, match='phase-0 spider'):
+        copy_leaf(k, leaf)
+    k = g.clone()
+    k.set_type(leaf, VertexType.Z)
+    with pytest.raises(ValueError, match='other colour'):
+        copy_leaf(k, leaf)
+    k = g.clone()
+    k.set_phase(leaf, Fraction(1, 4))
+    with pytest.raises(ValueError, match='not 0, pi'):
+        copy_leaf(k, leaf)

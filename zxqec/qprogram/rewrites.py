@@ -32,7 +32,12 @@ The rewrites known by name (:data:`REWRITES`):
 * ``'gpf-no-gadgets'`` -- the same with the gadgets held fixed;
 * ``'full_reduce'``, ``'clifford_simp'``, ``'spider_simp'`` -- PyZX's simplifiers;
 * ``'teleport_reduce'`` -- PyZX's phase teleportation, which keeps the shape of
-  the diagram and only moves phases.
+  the diagram and only moves phases;
+* ``'thesis notation'``, ``'copy and fuse'``, ``'remove identities'`` -- the steps
+  of a derivation by hand (:mod:`zxqec.gpf.rules`): measurements as effects and
+  swaps as crossing wires; states copied and one-legged spiders fused; identities
+  removed and cancelling phases fused. Levelling up one part of a circuit after
+  another with them gives the diagrams of Eq. (6.42) of L. Yeh's thesis.
 
 :func:`register_rewrite` adds more: a function from a diagram to a diagram, to a
 ``GPFResult``, or to ``(diagram, detectors)``. Every rewrite must keep the linear
@@ -88,6 +93,13 @@ def _pyzx(name: str) -> Callable[[BaseGraph], Any]:
     return run
 
 
+def _rules(name: str) -> Callable[[BaseGraph], Any]:
+    def run(g: BaseGraph) -> Any:
+        from ..gpf import rules
+        return getattr(rules, name)(g.copy())
+    return run
+
+
 #: name -> function from a diagram to a diagram, a ``GPFResult`` or ``(diagram, detectors)``
 REWRITES: dict[str, Callable[[BaseGraph], Any]] = {
     'gpf': _gpf(True),
@@ -96,6 +108,9 @@ REWRITES: dict[str, Callable[[BaseGraph], Any]] = {
     'clifford_simp': _pyzx('clifford_simp'),
     'spider_simp': _pyzx('spider_simp'),
     'teleport_reduce': _pyzx('teleport_reduce'),
+    'thesis notation': _rules('thesis_notation'),
+    'copy and fuse': _rules('copy_and_fuse'),
+    'remove identities': _rules('remove_identities'),
 }
 
 

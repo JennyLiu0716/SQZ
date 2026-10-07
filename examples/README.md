@@ -97,6 +97,19 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   their shapes with `check_diagram`: a triangle and a cube, then a tetrahedron), the identity in every run, and
   circuit distance 2 when the cube state is prepared without checks (one fault in preparing it, one in a gauge
   measurement), 3 once four of its faces are measured first.
+- [GateTeleportation.ipynb](GateTeleportation.ipynb) — a logical CX between the two logical qubits of one block
+  of the 2×2 toric code [[8,2,2]], by gate teleportation through a second block (L. Yeh's thesis, Eq. (6.42)):
+  teleport c into the ancilla, swap c and t there (a reordering of the qubits, `add_permutation`), a
+  transversal CX, swap back, teleport c back. First the diagram of Eq. (6.42) on four logical wires, rewritten
+  step by step (`to_gpf_steps`) into a CX with the ancilla's t in |0⟩; then the 17-qubit circuit, whose normal
+  form is the toric code's encoder after that CX. The tool follows c into the ancilla and back, finds the whole
+  program to be a CX from c to t in every run, and circuit distance 1 when c is measured once (one flipped
+  result), 2 when it is measured twice (`circuit_distance(..., several_logicals=True)`).
+- [GateTeleportationStepByStep.ipynb](GateTeleportationStepByStep.ipynb) — Eq. (6.42) of L. Yeh's thesis
+  level by level: the circuit of its first diagram on four logical wires, levelled up with one rewrite per level
+  (`'thesis notation'`, `'copy and fuse'`, `'remove identities'`, each made of PyZX's single rules), so that the
+  levels' pictures (`reduced_level`) are the five diagrams of the equation, down to a CX from c to t; each checked
+  against the circuit in every run, and the levels window (`view_levels`).
 - [ComparingPrograms.ipynb](ComparingPrograms.ipynb) — are two programs the same *logically*? A
   demo of `compare_programs`, for comparing a circuit as written with a compiled one: block by block,
   the same codes, the same logical operations up to a Pauli frame, and the same detectors. Four

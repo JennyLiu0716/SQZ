@@ -23,7 +23,8 @@ every cut, which a bad gate schedule can undercut.
 :func:`circuit_distance` writes the stages as a Stim circuit:
 
 1. noiseless products of Paulis (``MPP``) measuring the stabilizers of the code
-   before the stages and one of its logical operators, which puts Stim's initial
+   before the stages and one of its logical operators (with ``several_logicals``, all
+   of them, as X or as Z), which puts Stim's initial
    ``|0...0>`` into the code, and the Pauli of every fixed qubit there (e.g. a
    helper prepared in ``|+>`` that the stages use later); if the stages start the
    program, its initial states are prepared instead;
@@ -33,26 +34,34 @@ every cut, which a bad gate schedule can undercut.
    ``Z_ERROR`` after every gate and reset (Z faults); ``'X'``: only ``X_ERROR``
    after every gate and reset and before every measurement (X faults);
 3. noiseless ``MPP`` measuring the stabilizers of the code after the stages and
-   one logical operator (X, Y or Z).
+   one logical operator (X, Y or Z; with ``several_logicals``, each of them).
 
 The detectors and the observable are not written by hand: the noiseless circuit
 is read back with :func:`~zxqec.qprogram.program_from_stim` and reduced, and its
 detectors (every parity of results that is the same in every run) become
-``DETECTOR`` lines; the one that contains the final logical measurement becomes
-the observable. This works whatever the stages do to the logical qubit, a
-logical Hadamard included, and Stim checks that every detector and the
-observable are deterministic. :func:`codedistance.circuitDistance` then finds
-the lightest undetectable fault set (by default with ``'MIPDist'``, an exact
-integer program; ``codedistance``'s Chromobius filter is switched off). Each
-input logical (X, then Z) is paired with every output logical whose final value
-is deterministic, and the smallest distance is reported.
+``DETECTOR`` lines; those that contain a final logical measurement become the
+observables (independent ones only). This works whatever the stages do to the
+logical qubits, a logical Hadamard or CNOT included, and Stim checks that every
+detector and observable is deterministic. :func:`codedistance.circuitDistance` then finds
+the lightest undetectable fault set that flips an observable (by default with
+``'MIPDist'``, an exact integer program; ``codedistance``'s Chromobius filter is
+switched off). Each input logical (X, then Z) is paired with every output logical
+whose final value is deterministic, and the smallest distance is reported.
+
+**Several logical qubits.** By default the code after the stages must have one
+logical qubit and the code before at most one. With ``several_logicals=True`` any
+number is allowed: the input logicals are prepared all as X, then all as Z, and
+each time the output logicals are measured in every combination of X, Y and Z
+(nine circuits for two logical qubits); every independent deterministic parity
+that contains a final logical measurement is an observable. A logical error that
+no circuit sees would commute with the images of all the input X and Z logicals,
+which generate every logical operator, so it is no error.
 
 The stages must be Clifford: a ``T`` gate, or a correction controlled by
 outcomes other than a Pauli, raises :class:`NotCliffordError`. The Z and X
 distances need *phase-free* stages (CNOTs, resets, measurements and Paulis; a
 Hadamard only as part of an X-basis reset or measurement), else
-:class:`NotPhaseFreeError` is raised. One logical qubit after the stages is
-supported.
+:class:`NotPhaseFreeError` is raised.
 
 **Non-Clifford circuits.** A ``Z`` fault commutes with ``T`` and ``T^dag``, so in
 a phase-free circuit whose only non-Clifford gates are single-qubit ``T``-type
@@ -71,6 +80,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import itertools
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -255,7 +265,7 @@ def _fixed_letter(state: str) -> str:
 
 
 def _circuit(program: QProgram, first: int, last: int, kind: str, p: float, code_in: Any, code_out: Any,
-             in_letters: str | None, out_letters: str, fixed_in: dict[Any, str],
+             in_letters: Sequence[str] | None, out_letters: Sequence[str], fixed_in: dict[Any, str],
              keep: tuple[str, ...] = ()) -> tuple[str, str, list[str]]:
     """(noiseless text, noisy text, the name of every measurement record in order); a TICK before every stage."""
     records: list[str] = []
@@ -278,9 +288,9 @@ def _circuit(program: QProgram, first: int, last: int, kind: str, p: float, code
     for i, s in enumerate(code_in.stabilizers):
         both('MPP ' + _mpp(s.letters, labels_in))
         records.append('in_stabilizer_{}'.format(i))
-    if in_letters is not None:
-        both('MPP ' + _mpp(in_letters, labels_in))
-        records.append('in_logical')
+    for i, letters in enumerate(in_letters or ()):
+        both('MPP ' + _mpp(letters, labels_in))
+        records.append('in_logical_{}'.format(i))
     stage = None
     for s, line in _stage_lines(program, first, last, kind, p, keep):
         while stage is None or stage < s:                 # a TICK before every stage, empty ones included
@@ -308,8 +318,9 @@ def _circuit(program: QProgram, first: int, last: int, kind: str, p: float, code
     for i, s in enumerate(code_out.stabilizers):
         both('MPP ' + _mpp(s.letters, labels_out))
         records.append('out_stabilizer_{}'.format(i))
-    both('MPP ' + _mpp(out_letters, labels_out))
-    records.append('out_logical')
+    for j, letters in enumerate(out_letters):
+        both('MPP ' + _mpp(letters, labels_out))
+        records.append('out_logical_{}'.format(j))
     return '\n'.join(clean) + '\n', '\n'.join(noisy) + '\n', records
 
 
@@ -352,21 +363,29 @@ def _rank(rows: list[list[int]]) -> int:
 
 
 def _annotated(clean: str, noisy: str, records: list[str]) -> tuple[str | None, int]:
-    """``noisy`` with the detectors and the observable that zxqec derives from ``clean``; None if the final
-    logical measurement is random (then it cannot be an observable)."""
+    """``noisy`` with the detectors and the observables that zxqec derives from ``clean``; None if every final
+    logical measurement is random (then none can be an observable).
+
+    The observables are a basis of the deterministic parities that contain a final logical measurement, one
+    found for each such measurement in turn; what is left, with no final logical measurement, are the detectors.
+    """
     n = len(records)
-    rows = _detector_rows(clean, n)
-    pivot, detectors = _split_off(rows, records.index('out_logical'))
-    if pivot is None:
-        return None, len(rows)
+    detectors = _detector_rows(clean, n)
+    observables = []
+    for col in (i for i, r in enumerate(records) if r.startswith('out_logical')):
+        pivot, detectors = _split_off(detectors, col)
+        if pivot is not None:
+            observables.append(pivot)
+    if not observables:
+        return None, len(detectors)
     rec = lambda row: ' '.join('rec[-{}]'.format(n - i) for i, b in enumerate(row) if b)
     lines = [noisy.rstrip('\n')] + ['DETECTOR ' + rec(r) for r in detectors if any(r)]
-    lines.append('OBSERVABLE_INCLUDE(0) ' + rec(pivot))
+    lines += ['OBSERVABLE_INCLUDE({}) '.format(i) + rec(o) for i, o in enumerate(observables)]
     return '\n'.join(lines) + '\n', sum(1 for r in detectors if any(r))
 
 
-def _letters(code: Any, which: str) -> str:
-    x, z = code.logical_x[0].letters, code.logical_z[0].letters
+def _letters(code: Any, which: str, i: int = 0) -> str:
+    x, z = code.logical_x[i].letters, code.logical_z[i].letters
     if which == 'X':
         return x
     if which == 'Z':
@@ -378,20 +397,25 @@ def _letters(code: Any, which: str) -> str:
 
 def circuit_distance(program: QProgram, first: int = 0, last: int | None = None, kind: str | Sequence[str] = 'full',
                      p: float = 1e-3, method: str = 'MIPDist', code_in: Any = None, code_out: Any = None,
-                     params: dict[str, Any] | None = None) -> Any:
+                     params: dict[str, Any] | None = None, several_logicals: bool = False) -> Any:
     """The circuit distance of stages ``first`` to ``last`` (see the module docstring).
 
     ``kind`` is ``'full'``, ``'Z'`` or ``'X'``, or a sequence of them (then a dict
-    ``kind -> CircuitDistance`` is returned). ``code_in`` / ``code_out`` default to
-    the codes the program is in before and after the stages; give ``code_out``
-    when the logical to protect is not that of the stages' own output, as for
-    a circuit with its ``T`` gates removed. ``p`` only sets the probabilities in
-    the Stim circuit; ``method`` and ``params`` go to
+    ``kind -> CircuitDistance`` is returned). By default the code after the stages
+    has one logical qubit and the code before at most one; ``several_logicals=True``
+    allows any number (see the module docstring), and the keys of
+    :attr:`CircuitDistance.by_logical` are then pairs such as ``('X', 'XZ')``: all
+    input logicals prepared as X, the output logicals measured as X and Z.
+    ``code_in`` / ``code_out`` default to the codes the program is in before and
+    after the stages; give ``code_out`` when the logical to protect is not that
+    of the stages' own output, as for a circuit with its ``T`` gates removed.
+    ``p`` only sets the probabilities in the Stim circuit; ``method`` and ``params`` go to
     :func:`codedistance.circuitDistance`. Needs the ``stim`` and ``codedistance``
     packages.
     """
     if not isinstance(kind, str):
-        return {k: circuit_distance(program, first, last, k, p, method, code_in, code_out, params) for k in kind}
+        return {k: circuit_distance(program, first, last, k, p, method, code_in, code_out, params, several_logicals)
+                for k in kind}
     if kind not in KINDS:
         raise ValueError("kind must be one of {}, got {!r}".format(KINDS, kind))
     try:
@@ -410,21 +434,24 @@ def circuit_distance(program: QProgram, first: int = 0, last: int | None = None,
     fixed_in = cut.fixed_qubits() if first > 0 else {}  # at the start, the initial states are prepared instead
     code_in = cut.data() if code_in is None else code_in
     code_out = program.code_at(last).data() if code_out is None else code_out
-    if code_out.k != 1:
-        raise NotImplementedError("circuit_distance: one logical qubit after the stages is supported, the code "
-                                  "after them has k = {}; give code_out".format(code_out.k))
-    if code_in.k > 1:
-        raise NotImplementedError("circuit_distance: at most one logical qubit before the stages is supported")
+    if not several_logicals:
+        if code_out.k != 1:
+            raise NotImplementedError("circuit_distance: one logical qubit after the stages is supported, the code "
+                                      "after them has k = {}; give code_out".format(code_out.k))
+        if code_in.k > 1:
+            raise NotImplementedError("circuit_distance: at most one logical qubit before the stages is supported")
+    elif code_out.k == 0:
+        raise ValueError("circuit_distance: the code after the stages has no logical qubit; give code_out")
     result = CircuitDistance(kind, first, last, None, method=method)
     for a in (('X', 'Z') if code_in.k else (None,)):
-        in_letters = _letters(code_in, a) if a else None
-        for b in ('X', 'Y', 'Z'):
+        in_letters = [_letters(code_in, a, i) for i in range(code_in.k)] if a else None
+        for b in itertools.product('XYZ', repeat=code_out.k):
             clean, noisy, records = _circuit(program, first, last, kind, p, code_in, code_out, in_letters,
-                                             _letters(code_out, b), fixed_in)
+                                             [_letters(code_out, c, j) for j, c in enumerate(b)], fixed_in)
             text, ndet = _annotated(clean, noisy, records)
             if text is None:
-                continue                                  # that output logical is random: no observable
-            key = (a or '-', b)
+                continue                                  # those output logicals are random: no observable
+            key = (a or '-', ''.join(b))
             qc = stim.Circuit(text)
             result.circuits[key] = text
             result.detectors[key] = ndet
@@ -531,13 +558,13 @@ def z_distance_through_t(program: QProgram, first: int = 0, last: int | None = N
                                     "basis, so a Z fault can trigger it, and the X error it then makes does not "
                                     "commute with T".format(s, g.target, ', '.join(sorted(set(g.bits) & x_basis))))
     fixed_in = stripped.code_at(first - 1).fixed_qubits() if first > 0 else {}
-    out_letters = _letters(code_out, 'X')
+    out_letters = [_letters(code_out, 'X')]
     for a in (('X', 'Z') if code_in.k else (None,)):
-        in_letters = _letters(code_in, a) if a else None
+        in_letters = [_letters(code_in, a)] if a else None
         real, _, records = _circuit(program, first, last, 'Z', p, code_in, code_out, in_letters, out_letters,
                                     fixed_in, keep=('T',))
         bare, _, _ = _circuit(stripped, first, last, 'Z', p, code_in, code_out, in_letters, out_letters, fixed_in)
-        col = records.index('out_logical')
+        col = records.index('out_logical_0')
         with_t = _split_off(_detector_rows(real, len(records)), col)[1]
         without_t = _split_off(_detector_rows(bare, len(records)), col)[1]
         r1, r2, both = _rank(with_t), _rank(without_t), _rank(with_t + without_t)

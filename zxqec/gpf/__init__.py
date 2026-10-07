@@ -34,6 +34,10 @@
   value of its hidden spiders, and what each term does to each qubit and to
   X, Y, Z errors; the check for distance is that every term maps each Pauli
   error to the same Pauli.
+* :func:`copy_leaf` -- the copy rule for a spider with one leg whose phase is a
+  measurement result; :func:`thesis_notation`, :func:`copy_and_fuse` and
+  :func:`remove_identities` -- the steps of a derivation by hand, made of single
+  rules (also level-up rewrites by those names).
 """
 
 from .gadgets import phase_polynomial, simplify_gadgets
@@ -45,6 +49,7 @@ from .reduce import (GPFResult, boolean_variables, consistent_assignments, const
                      equal_for_all_assignments, evaluate_phase, phases_modulo, reduce_gpf, reduce_modulo,
                      same_map, sample_consistent_assignment, unsatisfiable)
 from .report import Measurement, MeasurementReport, measurement_report
+from .rules import copy_and_fuse, copy_leaf, remove_identities, thesis_notation
 from .terms import Decomposition, Part, Piece, Term, decompose_terms
 
 __all__ = [
@@ -56,5 +61,6 @@ __all__ = [
     'measurement_report', 'MeasurementReport', 'Measurement',
     'push_hadamards_to_boundary', 'restore_boundary_hadamards', 'has_boundary_hadamard',
     'BOUNDARY_HADAMARD_KEY', 'simplify_gadgets', 'phase_polynomial',
-    'decompose_terms', 'Decomposition', 'Part', 'Term', 'Piece',
+    'decompose_terms', 'Decomposition', 'Part', 'Term', 'Piece', 'copy_leaf',
+    'thesis_notation', 'copy_and_fuse', 'remove_identities',
 ]
