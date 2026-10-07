@@ -19,7 +19,11 @@ A program is built stage by stage. A stage is either a PyZX :class:`Circuit`
 permutation of the qubits over the hardware topology. The stages are
 scheduled one after the other: within a stage the gates are placed as soon as
 possible (:mod:`pyzx.spacetime`), and every stage starts on the tick after the
-previous one finished. :meth:`QProgram.graph` returns the resulting master
+previous one finished. Consecutive gates of a stage on distinct qubits that carry
+the same ``layer`` attribute (:func:`same_layer`; :func:`program_from_stim` sets it
+on the gates of one ``T`` / ``T_DAG`` instruction) are placed as one: they start
+when the last of their qubits is free, so a transversal layer sits on one time
+step instead of being spread over the times its qubits become free. :meth:`QProgram.graph` returns the resulting master
 space-time ZX-diagram, in which every spider carries ``timestep``, ``delay``,
 ``stage`` and ``logical_qubit`` vertex data and sits on the *physical* wire of
 its qubit.
@@ -41,11 +45,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from pyzx.circuit import Circuit
-from pyzx.circuit.gates import HAD, Reset
+from pyzx.circuit.gates import HAD, Gate, Reset
 from pyzx.circuit.graphparser import circuit_to_graph
 from pyzx.graph import Graph
 from pyzx.graph.base import BaseGraph
 from pyzx.spacetime import set_delay, set_timestep, spacetime_metrics, time_extent, used_qubits
+from pyzx.spacetime.scheduling import gate_duration
 from pyzx.symbolic import new_var
 from pyzx.utils import EdgeType, VertexType
 
@@ -57,7 +62,60 @@ from ..spacetime.topology import Topology
 from .levels import Block, LevelManager
 from .rewrites import ReducedBlock, ReducedLevel, check_rewrite, reduce_block, reduce_level
 
-__all__ = ['Stage', 'QProgram']
+__all__ = ['Stage', 'QProgram', 'same_layer']
+
+
+def same_layer(gates: Sequence[Gate], layer: Any) -> list[Gate]:
+    """Mark ``gates`` (on distinct qubits) as one layer, to be placed on one time step; returns them.
+
+    ``layer`` is any value that the gates of the next and previous layers do not
+    share. Only the time steps of the diagram change: the stage keeps its gates,
+    one by one, for everything else (fault locations, summaries).
+    """
+    gates = list(gates)
+    for gate in gates:
+        gate.layer = layer        # type: ignore[attr-defined]
+    return gates
+
+
+class _Layer(Gate):
+    """Consecutive gates of one layer, given to PyZX's scheduler as a single gate (see :func:`same_layer`)."""
+
+    def __init__(self, gates: Sequence[Gate], name: str) -> None:
+        self.gates = list(gates)
+        self.targets = sorted({q for gate in self.gates for q in used_qubits(gate)})
+        self.name = name          # type: ignore[misc]   # the key of its duration
+
+    def __str__(self) -> str:
+        return 'Layer({})'.format(', '.join(str(gate) for gate in self.gates))
+
+    def to_graph(self, g: Any, q_mapper: Any, c_mapper: Any) -> None:
+        for gate in self.gates:
+            gate.to_graph(g, q_mapper, c_mapper)
+
+
+def _grouped(gates: Sequence[Gate], durations: dict[Any, int]) -> list[Gate]:
+    """``gates`` with each run of consecutive gates of one layer on distinct qubits merged into a :class:`_Layer`.
+
+    The layer's duration, the longest of its gates', is added to ``durations``
+    under the layer's name.
+    """
+    out: list[Gate] = []
+    i = 0
+    while i < len(gates):
+        tag = getattr(gates[i], 'layer', None)
+        j = i + 1
+        while tag is not None and j < len(gates) and getattr(gates[j], 'layer', None) == tag:
+            j += 1
+        qubits = [q for gate in gates[i:j] for q in used_qubits(gate)]
+        if j - i > 1 and len(qubits) == len(set(qubits)):
+            name = 'Layer#{}'.format(len(durations))
+            durations[name] = max(gate_duration(gate, durations) for gate in gates[i:j])
+            out.append(_Layer(gates[i:j], name))
+        else:
+            out.extend(gates[i:j])
+        i = j
+    return out
 
 # Symbolic variables that PyZX generates per circuit_to_graph call (measurement
 # outcomes ``m1, m2, ...`` and reset randomness ``_r0, ...``).  They restart at
@@ -680,8 +738,9 @@ class QProgram:
             else:
                 raise ValueError("qubit {} was measured before stage {} and is reused by {} "
                                  "without a Reset".format(k, st.index, first_gate[k]))
-        g = circuit_to_graph(c, initialize_qubits=init if any(init) else None,
-                             gate_durations=self.gate_durations)
+        durations = dict(self.gate_durations)
+        c.gates = _grouped(c.gates, durations)
+        g = circuit_to_graph(c, initialize_qubits=init if any(init) else None, gate_durations=durations)
         # drop the wires of dead qubits the stage does not touch
         if strip:
             ins = list(g.inputs())

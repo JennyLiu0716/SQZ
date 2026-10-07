@@ -88,3 +88,56 @@ def test_measurement_records_only_as_controls():
         parse_stim("M 0\nCX 1 rec[-1]\n")
     with pytest.raises(ValueError):
         parse_stim("M 0\nH rec[-1]\n")
+
+
+def test_t_layers_sit_on_one_time_step():
+    # the gates of consecutive T and T_DAG instructions are placed on one time step (a transversal layer), not each
+    # as soon as its qubit is free; nothing but the time steps changes, and the program takes no longer
+    import os
+    from collections import defaultdict
+    from fractions import Fraction
+    from pyzx.spacetime import time_extent
+    from zxqec.qprogram import program_from_stim
+    from zxqec.spacetime.subdiagram import get_timestep
+    here = os.path.join(os.path.dirname(__file__), '..', 'examples', 'circuits', 'cultivation', 'd3_cultivation.stim')
+    text = open(here).read()
+
+    def t_layers(g):
+        by_t = defaultdict(set)
+        for v in g.vertices():
+            try:
+                phase = Fraction(g.phase(v)) % 2
+            except (TypeError, ValueError):
+                continue
+            if phase.denominator == 4:
+                by_t[get_timestep(g, v)].add(int(g.qubit(v)))
+        return dict(by_t)
+    layered = program_from_stim(text)[0].quantum_graph()
+    asap = program_from_stim(text, layers=())[0].quantum_graph()
+    code_qubits = {0, 3, 6, 8, 9, 11, 14}
+    assert sorted(t_layers(layered).values(), key=len) == [{13}, code_qubits, code_qubits]
+    assert len(t_layers(asap)) == 4                         # as soon as possible, qubit 11's T comes early
+    assert time_extent(layered) == time_extent(asap)
+    assert sorted(layered.vertices()) == sorted(asap.vertices())
+    assert all(str(layered.phase(v)) == str(asap.phase(v)) for v in layered.vertices())
+    assert sorted(map(sorted, (layered.edge_st(e) for e in layered.edges()))) == \
+        sorted(map(sorted, (asap.edge_st(e) for e in asap.edges())))
+
+
+def test_same_layer_on_a_program():
+    from pyzx.circuit import Circuit
+    from pyzx.circuit.gates import CNOT, T
+    from pyzx.spacetime import get_timestep
+    from zxqec.qprogram import QProgram, same_layer
+    for grouped in (False, True):
+        c = Circuit(3)
+        c.add_gate(CNOT(0, 1))
+        c.add_gate(CNOT(0, 1))                              # qubits 0 and 1 are busy for two ticks, qubit 2 is not
+        gates = [T(0), T(1), T(2)]
+        for gate in same_layer(gates, 'layer') if grouped else gates:
+            c.add_gate(gate)
+        p = QProgram(3)
+        p.add_circuit(c, name='layer')
+        g = p.quantum_graph()
+        ts = sorted({get_timestep(g, v) for v in g.vertices() if str(g.phase(v)) == '1/4'})
+        assert len(ts) == (1 if grouped else 2)

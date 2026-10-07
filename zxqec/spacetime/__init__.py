@@ -47,7 +47,7 @@ from .drawing import (VIEWS, draw_graph, draw_graph_3d, draw_level_3d, draw_prog
 from .topology import Topology
 from .web import draw_program_web, draw_web
 from .levels_view import LevelsView, LevelsView3D, view_levels, view_levels_3d
-from .relax import RELAX_METHODS, draw_relaxed, draw_relaxed_3d, relax_layout
+from .relax import RELAX_METHODS, SHADE_COLORS, draw_relaxed, draw_relaxed_3d, relax_layout
 
 __all__ = [
     'Topology',
@@ -59,5 +59,5 @@ __all__ = [
     'draw_level_3d', 'level_layout_3d',
     'draw_web', 'draw_program_web',
     'view_levels', 'LevelsView', 'view_levels_3d', 'LevelsView3D',
-    'relax_layout', 'draw_relaxed', 'draw_relaxed_3d', 'RELAX_METHODS',
+    'relax_layout', 'draw_relaxed', 'draw_relaxed_3d', 'RELAX_METHODS', 'SHADE_COLORS',
 ]

@@ -40,6 +40,11 @@ into a :class:`QProgram`.
   the detectors the authors wrote by hand can be compared with the ones the
   reduction derives. ``QUBIT_COORDS`` are returned too; ``TICK`` is ignored
   (the program schedules its own gates).
+* The gates of consecutive ``T`` and ``T_DAG`` instructions form one layer
+  (:func:`~zxqec.qprogram.same_layer`): they are placed on one time step, as
+  in the file, rather than each as soon as its qubit is free. A transversal
+  ``T`` layer then sits on one time step of the diagram, so that a slice or a
+  cut at a time step holds all of it. ``layers`` chooses the instructions.
 
 The program is cut into stages at every point where a qubit that has been
 measured is reset again, so that every measurement ends a stage and every
@@ -58,7 +63,7 @@ from pyzx.circuit import Circuit
 from pyzx.circuit.gates import CNOT, CZ, HAD, NOT, Measurement, Reset, S, T, Z
 
 from .feedforward import ParityControlled
-from .program import QProgram
+from .program import QProgram, same_layer
 
 __all__ = ['StimCircuit', 'parse_stim', 'program_from_stim']
 
@@ -229,7 +234,8 @@ def _gates(ins: Instruction, first_bit: int, first_helper: int = -1) -> list[Any
 
 
 def program_from_stim(text: str | StimCircuit, names: Sequence[str] | None = None,
-                      extra_cuts: Sequence[int] = ()) -> tuple[QProgram, StimCircuit]:
+                      extra_cuts: Sequence[int] = (),
+                      layers: Sequence[str] = ('T', 'T_DAG')) -> tuple[QProgram, StimCircuit]:
     """A :class:`QProgram` for a Stim-format circuit, and the parsed circuit.
 
     Every qubit starts in ``|0>`` (a leading ``R`` is then a no-op, a leading
@@ -237,7 +243,9 @@ def program_from_stim(text: str | StimCircuit, names: Sequence[str] | None = Non
     module docstring; ``names`` names them in order (``stage 0``, ... by
     default), and ``extra_cuts`` adds cuts before the given instruction indices.
     The helper qubits of ``MPP`` products come after the circuit's qubits, one
-    per product in the order of the file.
+    per product in the order of the file. Consecutive instructions named in
+    ``layers`` are one layer of gates, placed on one time step (``()`` places
+    every gate as soon as its qubits are free).
     """
     circ = text if isinstance(text, StimCircuit) else parse_stim(text)
     n, nbits = circ.qubits, circ.measurements
@@ -256,10 +264,17 @@ def program_from_stim(text: str | StimCircuit, names: Sequence[str] | None = Non
     bounds = [0] + sorted(c for c in cuts if 0 < c < len(circ.instructions)) + [len(circ.instructions)]
     p = QProgram(n + helpers, bits=nbits, initial_states={q: '0' for q in range(n + helpers)})
     bit, helper = 0, n
+    layer, previous = 0, None
     for s, (a, b) in enumerate(zip(bounds, bounds[1:])):
         c = Circuit(n + helpers, bit_amount=nbits)
         for ins in circ.instructions[a:b]:
-            for g in _gates(ins, bit, helper):
+            gates = _gates(ins, bit, helper)
+            if ins.name in layers:
+                if previous not in layers:
+                    layer += 1
+                same_layer(gates, ('stim', layer))
+            previous = ins.name
+            for g in gates:
                 c.add_gate(g)
             if ins.name in ('M', 'MX'):
                 bit += len(ins.targets)

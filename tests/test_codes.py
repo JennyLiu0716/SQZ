@@ -451,3 +451,42 @@ def test_a_fault_can_spread_inside_a_block_through_another_block():
     for q in range(7):
         transversal.add_gate(CNOT(q, 7 + q))
     assert transversality_violations(transversal, code) == []
+
+
+def test_magic_state_from_a_choi_state():
+    # The running example prepares T|+> on the input of the magic block and then encodes it (stages 1 and 2). The
+    # same encoded state comes from the encoder's Choi state: a reference qubit in a Bell pair with the input,
+    # then the encoder, then the reference measured in the basis T^dag|+>, T^dag|-> (T, then an X measurement).
+    # Outcome m leaves the logical state Z^m T|+>; with the logical Z (transversal) applied when m = 1, it is
+    # the prepared-and-encoded state for both outcomes (the paper's Figure 4).
+    from pyzx.circuit.gates import Measurement, Z
+
+    def circ(n, gates, bits=0):
+        c = Circuit(n, bit_amount=bits)
+        for g in gates:
+            c.add_gate(g)
+        return c
+
+    def prepared(logical_z=False):
+        a = QProgram(7, initial_states={q: '0' for q in range(7)})
+        a.add_circuit(circ(7, [HAD(3), T(3)]), name='prepare T|+>')
+        a.add_circuit(circ(7, steane_encoder(list(range(7)))), name='encode the magic')
+        if logical_z:
+            a.add_circuit(circ(7, [Z(q) for q in range(7)]), name='logical Z')
+        return a.quantum_graph()
+
+    def from_choi_state(frame):
+        b = QProgram(8, bits=1, initial_states={q: '0' for q in range(8)})
+        b.add_circuit(circ(8, [HAD(7), CNOT(7, 3)], bits=1), name='Bell pair')
+        b.add_circuit(circ(8, steane_encoder(list(range(7))), bits=1), name='encode: the Choi state')
+        b.add_circuit(circ(8, [T(7), HAD(7), Measurement(7, 0)], bits=1), name='measure the reference')
+        if frame:
+            b.add_circuit(circ(8, [ParityControlled('Z', q, ['c[0]']) for q in range(7)], bits=1), name='frame')
+        return b.quantum_graph()
+
+    for m in (0, 1):
+        assert same_map(prepared(), from_choi_state(frame=True).substitute_variables({'c[0]': m}))
+    without = from_choi_state(frame=False)
+    assert same_map(prepared(), without.substitute_variables({'c[0]': 0}))
+    assert same_map(prepared(logical_z=True), without.substitute_variables({'c[0]': 1}))
+    assert not same_map(prepared(), without.substitute_variables({'c[0]': 1}))

@@ -46,11 +46,11 @@ from .distance import (CircuitDistance, Fault, NotCliffordError, NotPhaseFreeErr
 from .distance_check import DistanceCheck, GroupCheck, SplitProgram, check_distance, split_by_gate_type
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
-from .program import QProgram, Stage
+from .program import QProgram, Stage, same_layer
 from .rewrites import REWRITES, ReducedBlock, ReducedLevel, register_rewrite
 from .stim_text import StimCircuit, parse_stim, program_from_stim
 
-__all__ = ['QProgram', 'Stage', 'Block', 'LevelManager', 'ParityControlled',
+__all__ = ['QProgram', 'Stage', 'same_layer', 'Block', 'LevelManager', 'ParityControlled',
            'StimCircuit', 'parse_stim', 'program_from_stim',
            'BlockComparison', 'ProgramComparison', 'compare_programs',
            'DeclaredDetector', 'DetectorCheck', 'check_detectors',

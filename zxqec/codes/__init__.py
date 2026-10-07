@@ -22,8 +22,11 @@
   encoder) in isometry affine-with-phases normal form (:class:`IAPNormalForm`),
   computed from :func:`reduced_ap_form`, the reduced AP form of its Choi state
   (:class:`APForm`).
+* :func:`check_diagram` -- the checks of a CSS code as a ZX-diagram, to see its
+  shape with :func:`~zxqec.spacetime.draw_relaxed`; :func:`surface_code_checks`.
 """
 
+from .checks import check_diagram, surface_code_checks
 from .code import NotACodeError, OutcomeDependentCodeError, StabilizerCode, code_of
 from .iapnf import APForm, IAPNormalForm, iap_normal_form, reduced_ap_form
 from .logical import Branch, LogicalAction, glue, logical_action
@@ -31,4 +34,4 @@ from .pauli import PauliString, phase_sum
 
 __all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of', 'PauliString', 'phase_sum',
            'logical_action', 'LogicalAction', 'Branch', 'glue', 'iap_normal_form', 'IAPNormalForm',
-           'reduced_ap_form', 'APForm']
+           'reduced_ap_form', 'APForm', 'check_diagram', 'surface_code_checks']

@@ -124,7 +124,10 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
 - [RelaxedLayouts.ipynb](RelaxedLayouts.ipynb) — diagrams laid out where a physical energy is lowest,
   with no coordinates given (`relax_layout`, `draw_relaxed`, `draw_relaxed_3d`; Kamada-Kawai springs or a
   force simulation, with networkx): the first checks and the double-check of d = 3 cultivation as
-  reduced, and the whole fold-transversal Hadamard (`pip install zxqec[layout]`).
+  reduced, and the whole fold-transversal Hadamard; and codes by their shape, for debugging and for
+  recognising a code (`check_diagram`, each check shaded): the Steane code's three faces, the same
+  whatever the qubits' order, the [[8,3,2]] code as a cube, the surface code as a grid of plaquettes, and
+  the [[15,1,3]] code as a tetrahedron cut into four cells (`pip install zxqec[layout]`).
 - [DistanceChecking.ipynb](DistanceChecking.ipynb) — L. Yeh's distance-checking pipeline (`check_distance`):
   the stages cut by gate type, the circuit distance of every Clifford run, and the non-Clifford stages
   grouped and checked term by term. On d = 3 cultivation the double-check fails the check, as its fault
