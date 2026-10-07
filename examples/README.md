@@ -91,6 +91,12 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   of two Steane blocks passes; the same `CNOT` with a chain that undoes itself, and a `SWAP` inside the
   [[4,2,2]] code (a logical `CNOT`), do not; `H` on every qubit of the [[4,2,2]] code is transversal but
   its logical action, `SWAP (H x H)` (checked with numpy), is not one of the named gates.
+- [CodeSwitching.ipynb](CodeSwitching.ipynb) — the role `code switching`: the Steane code switched to the
+  [[15,1,3]] Reed-Muller code by gauge fixing. Eight new qubits in the cube state, three weight-4 Z gauge
+  operators measured, and X on a face of the triangle for each outcome 1. The tool finds the two codes (drawn by
+  their shapes with `check_diagram`: a triangle and a cube, then a tetrahedron), the identity in every run, and
+  circuit distance 2 when the cube state is prepared without checks (one fault in preparing it, one in a gauge
+  measurement), 3 once four of its faces are measured first.
 - [ComparingPrograms.ipynb](ComparingPrograms.ipynb) — are two programs the same *logically*? A
   demo of `compare_programs`, for comparing a circuit as written with a compiled one: block by block,
   the same codes, the same logical operations up to a Pauli frame, and the same detectors. Four

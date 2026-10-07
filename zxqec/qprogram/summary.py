@@ -189,6 +189,13 @@ def _checks(b: BlockSummary) -> list[tuple[bool, str]]:
                        "{}".format(" / ".join(sorted(map(str, ops))))))
     elif role == 'injection':
         checks.append((act.is_deterministic(), act.verdict()))
+    elif role == 'code switching':
+        checks.append((not b.code_in.same_code_as(b.code_out) and k_in == k_out,
+                       "switches {} to {}".format(_short(b.code_in), _short(b.code_out))))
+        d_in, d_out = b.code_in.distance, b.code_out.distance
+        if d_in is not None and d_out is not None:
+            checks.append((d_out >= d_in, "keeps the code distance ({} to {})".format(d_in, d_out)))
+        checks.append((act.is_deterministic() and ops == {'I'}, "leaves the logical state unchanged in every run"))
     elif role == 'cultivation':
         # the double-check of magic-state cultivation: measure the logical qubit in the basis of
         # the magic state, with an outcome that earlier outcomes predict
