@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any
@@ -290,9 +290,11 @@ def constraint_system(constraints: Iterable[Any]) -> tuple[list[str], list[list[
     """The constraints as an augmented matrix ``[A | b]`` over GF(2), in row echelon form.
 
     Each row is one linear relation ``sum of variables = constant``; the last
-    entry of a row is the constant. Non-linear constraints (which the pipeline
-    does not produce -- every spider phase stays affine in the outcomes) are
-    skipped, which keeps the result a sound under-approximation.
+    entry of a row is the constant. A constraint with a product of outcomes
+    (from a correction conditioned on several outcomes at once, such as
+    ``if(c==3) x q[2];``) has no row and is skipped, so the rows are only the
+    linear relations: they can have a solution when the constraints together
+    have none (:func:`unsatisfiable` takes the products into account).
     """
     names: list[str] = []
     rows: list[list[int]] = []
@@ -337,14 +339,23 @@ def unsatisfiable(constraints: Iterable[Any]) -> bool:
     """Whether no assignment satisfies all the constraints, so every branch is the zero map.
 
     Looking for the constant 1 among the constraints is not enough: ``{c, c + 1}``
-    has no solution although neither entry is constant.
+    has no solution although neither entry is constant. Neither is solving the
+    linear constraints alone: ``{c[0]*c[1] + 1, c[0]}`` has no solution either.
+    With products of outcomes, the values of the outcomes they read that the
+    linear constraints allow are listed until one makes every product 0.
     """
+    constraints = list(constraints)
     _names, rows = constraint_system(constraints)
-    return any(row[-1] and not any(row[:-1]) for row in rows)
+    if any(row[-1] and not any(row[:-1]) for row in rows):
+        return True
+    if not _split_products(constraints)[1]:
+        return False
+    names = sorted({v.name for c in constraints if isinstance(c, Poly) for v in c.free_vars()})
+    return next(_product_outcomes(constraints, names), None) is None
 
 
 def detector_rank(constraints: Iterable[Any]) -> int:
-    """The number of independent relations among the outcomes."""
+    """The number of independent relations among the outcomes; one with a product of outcomes is not counted."""
     _names, rows = constraint_system(constraints)
     return sum(1 for row in rows if any(row[:-1]))
 
@@ -579,25 +590,105 @@ def consistent_assignments(constraints: Iterable[Any], variables: Sequence[str])
     return out
 
 
+def _split_products(constraints: Iterable[Any]) -> tuple[list[Any], list[Any]]:
+    """The constraints without a product of outcomes and those with one, each in their order."""
+    linear: list[Any] = []
+    products: list[Any] = []
+    for c in constraints:
+        (products if isinstance(c, Poly) and not _is_affine(c) else linear).append(c)
+    return linear, products
+
+
+def _product_outcomes(constraints: Iterable[Any], names: Sequence[str]) -> Iterator[dict[str, int]]:
+    """The values that the outcomes read by the products among ``constraints`` take in the runs they allow.
+
+    The linear constraints are solved over GF(2) with these outcomes (those
+    among ``names``; another is 0, as in :func:`evaluate_phase`) eliminated
+    last, so the rows left on them alone are the linear relations among them.
+    Every solution of those rows is the value of these outcomes in the same
+    number of solutions of the linear constraints; the solutions on which every
+    product is 0 are yielded, one at a time. Nothing is yielded if there is
+    none, and without products the empty assignment is yielded once if the
+    linear constraints have a solution. The cost is 2 to the number of these
+    outcomes less the relations among them.
+    """
+    linear, products = _split_products(constraints)
+    names = list(names)
+    read = {v.name for c in products for v in c.free_vars()}
+    cols = [j for j, n in enumerate(names) if n in read]
+    rows = _linear_rows(linear, names)
+    pivots = _echelon(rows, [j for j in range(len(names)) if j not in cols] + cols)
+    if any(row[-1] and not any(row[:-1]) for row in rows):
+        return
+    on_read = [(rows[k], col) for k, col in enumerate(pivots) if col in cols]   # zero off the read outcomes
+    free = [j for j in cols if j not in pivots]
+    for bits in itertools.product([0, 1], repeat=len(free)):
+        values = dict(zip(free, bits))
+        for row, col in on_read:
+            values[col] = (row[-1] + sum(values[j] for j in free if row[j])) % 2
+        assignment = {names[j]: values[j] for j in cols}
+        if not any(evaluate_phase(c, assignment) for c in products):
+            yield assignment
+
+
+def _pins(assignment: dict[str, int]) -> list[Poly]:
+    """The constraints ``v + value`` that fix the outcomes of ``assignment`` to their values."""
+    return [new_var(n, True) + 1 if value else new_var(n, True) for n, value in assignment.items()]
+
+
 def _variable_order(name: str) -> tuple[str, int]:
     """``c[12]`` -> ``('c', 12)``, ``s3_r0`` -> ``('s3_r', 0)``: outcomes in the order they were measured."""
     m = re.fullmatch(r'(.*?)\[?(\d+)\]?', name)
     return (m.group(1), int(m.group(2))) if m else (name, -1)
 
 
-def reduce_modulo(phase: Any, constraints: Iterable[Any], registry: Any = None) -> Any:
-    """``phase`` with its parity of outcomes rewritten modulo the (linear) ``constraints``.
+def _is_affine(p: Poly) -> bool:
+    """Whether a phase is a constant plus a sum of single outcomes: no product of outcomes (mod 2)."""
+    return all(Fraction(coeff) % 2 == 0 or (len(term.vars) <= 1 and all(e == 1 for _v, e in term.vars))
+               for coeff, term in p.terms)
 
-    The constraints are brought to reduced echelon form with the *latest*
+
+def _with_fixed_outcomes(phase: Poly, constraints: Iterable[Any]) -> Any:
+    """``phase`` with every outcome that the linear ``constraints`` fix to a value replaced by that value."""
+    names, rows = constraint_system([c for c in constraints if isinstance(c, Poly)])
+    fixed = {}
+    for row in rows:
+        ones = [i for i, b in enumerate(row[:-1]) if b]
+        if len(ones) == 1:
+            fixed[names[ones[0]]] = row[-1]
+    subs = {v: Fraction(fixed[v.name]) for v in phase.free_vars() if v.name in fixed}
+    if not subs:
+        return phase
+    out = phase.substitute(subs)
+    terms = [(c, t) for c, t in out.terms if Fraction(c) % 2 != 0 or not t.vars] if isinstance(out, Poly) else None
+    return Poly(terms) if terms is not None and terms else (out if terms is None else 0)
+
+
+def reduce_modulo(phase: Any, constraints: Iterable[Any], registry: Any = None, latest: bool = False) -> Any:
+    """``phase`` with its parity of outcomes rewritten modulo the linear ``constraints``.
+
+    The linear constraints are brought to reduced echelon form with the *latest*
     outcomes as pivots, and those are eliminated from the parity, so what is
     left is written in the earliest outcomes it can be: two phases that agree in
-    every assignment the constraints allow come out equal. Only a phase of the
-    form ``constant + parity of Boolean variables`` (the phases of a reduced
-    diagram) is rewritten, with the constant taken modulo 2; any other phase is
-    returned unchanged. New variables are created in ``registry``.
+    every assignment the linear constraints allow come out equal. ``latest=True``
+    takes the earliest outcomes as pivots instead, so the phase is written in the
+    latest outcomes it can be (a stabilizer's sign in the results of the last round
+    that measured it). A constraint
+    with a product of outcomes is left out; the others are still used. Only a
+    phase of the form ``constant + parity of Boolean variables`` (the phases of
+    a reduced diagram) is rewritten, with the constant taken modulo 2. A phase
+    with a product of outcomes (a correction applied "if c[0] = 1 and c[1] = 0")
+    first has every outcome that the linear constraints fix replaced by its value;
+    if no product is left it is rewritten as above, otherwise it is returned with
+    only that replacement. Any other phase is returned unchanged. New variables
+    are created in ``registry``.
     """
     if not isinstance(phase, Poly):
         return phase
+    if not _is_affine(phase):
+        phase = _with_fixed_outcomes(phase, constraints)
+        if not isinstance(phase, Poly) or not _is_affine(phase):
+            return phase
     const, parity = Fraction(0), set()
     for coeff, term in phase.terms:
         c = Fraction(coeff)
@@ -615,11 +706,8 @@ def reduce_modulo(phase: Any, constraints: Iterable[Any], registry: Any = None) 
             if v.name not in names:
                 names.append(v.name)
     names.sort(key=_variable_order)
-    try:
-        rows = _linear_rows([c for c in constraints if isinstance(c, Poly)], names)
-    except ValueError:
-        rows = []
-    pivots = _echelon(rows, reversed(range(len(names))))
+    rows = _linear_rows([c for c in _split_products(constraints)[0] if isinstance(c, Poly)], names)
+    pivots = _echelon(rows, range(len(names)) if latest else reversed(range(len(names))))
     vec = [1 if n in parity else 0 for n in names]
     for k, col in enumerate(pivots):
         if vec[col]:
@@ -635,11 +723,11 @@ def reduce_modulo(phase: Any, constraints: Iterable[Any], registry: Any = None) 
     return out + const if const else out
 
 
-def phases_modulo(g: BaseGraph[VT, ET], constraints: Iterable[Any]) -> BaseGraph[VT, ET]:
+def phases_modulo(g: BaseGraph[VT, ET], constraints: Iterable[Any], latest: bool = False) -> BaseGraph[VT, ET]:
     """A clone of ``g`` (same vertices) with every phase rewritten by :func:`reduce_modulo`, e.g. to draw it."""
     constraints = list(constraints)
     h = g.clone()
     for v in h.vertices():
-        h.set_phase(v, reduce_modulo(h.phase(v), constraints, h.var_registry))
+        h.set_phase(v, reduce_modulo(h.phase(v), constraints, h.var_registry, latest))
     h.rebind_variables_to_registry()
     return h

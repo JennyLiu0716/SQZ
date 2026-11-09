@@ -36,7 +36,17 @@
   the Z distance of stages with ``T`` gates, after checking that removing them is exact;
 * :func:`check_distance` -- L. Yeh's distance-checking pipeline: stages cut by gate
   type (:func:`split_by_gate_type`), circuit distances of the Clifford runs, and the
-  non-Clifford stages grouped and checked term by term (:func:`~zxqec.gpf.decompose_terms`).
+  non-Clifford stages grouped and checked term by term (:func:`~zxqec.gpf.decompose_terms`);
+* :func:`find_corrections` -- the Pauli corrections, at the end of a program, that make
+  every run do what the run with every outcome 0 does, read off the Z-X and X-Z
+  normal forms (L. Yeh's "universal gadget fixing");
+* :func:`pauli_errors` -- every pattern of Pauli errors at chosen places, sorted into
+  caught by the checks, harmless and wrong: the leading term of the output error
+  of a protocol that keeps only runs whose checks pass (e.g. magic-state distillation);
+* :func:`error_formulas` -- a Pauli error after every gate as Boolean switches, pushed
+  to the results and outputs and reduced once: which detectors each error flips,
+  every single error sorted the same way, the fewest wrong faults (the fault distance)
+  and sampling with a probability per gate, with ``T`` gates included.
 """
 
 from .compare import BlockComparison, ProgramComparison, compare_programs
@@ -44,6 +54,9 @@ from .declared import DeclaredDetector, DetectorCheck, check_detectors
 from .distance import (CircuitDistance, Fault, NotCliffordError, NotPhaseFreeError, TRemovalError, circuit_distance,
                        without_gates, z_distance_through_t)
 from .distance_check import DistanceCheck, GroupCheck, SplitProgram, check_distance, split_by_gate_type
+from .corrections import Corrections, find_corrections
+from .errors import PauliErrors, pauli_errors
+from .faults import ErrorFormulas, Place, TFlip, error_formulas
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage, same_layer
@@ -56,4 +69,6 @@ __all__ = ['QProgram', 'Stage', 'same_layer', 'Block', 'LevelManager', 'ParityCo
            'DeclaredDetector', 'DetectorCheck', 'check_detectors',
            'CircuitDistance', 'Fault', 'NotCliffordError', 'NotPhaseFreeError', 'TRemovalError', 'circuit_distance',
            'without_gates', 'z_distance_through_t', 'REWRITES', 'ReducedBlock', 'ReducedLevel', 'register_rewrite',
-           'check_distance', 'split_by_gate_type', 'SplitProgram', 'GroupCheck', 'DistanceCheck']
+           'check_distance', 'split_by_gate_type', 'SplitProgram', 'GroupCheck', 'DistanceCheck',
+           'PauliErrors', 'pauli_errors', 'Corrections', 'find_corrections',
+           'ErrorFormulas', 'Place', 'TFlip', 'error_formulas']

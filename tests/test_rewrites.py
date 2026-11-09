@@ -196,6 +196,24 @@ def test_the_levels_window_moves_between_levels_and_blocks():
     assert view.level == top
 
 
+def test_the_levels_window_without_its_controls():
+    # a still figure: the three pictures and the text only, no slider or buttons; the methods still move it
+    import matplotlib
+    matplotlib.use('Agg')
+    from zxqec.spacetime import view_levels
+    p = _small_program()
+    l1 = p.group_stages([(0, 1, 'measure', None, 'gpf'), (2, 4, 'rest')])
+    with_controls = view_levels(p, l1, 0)
+    still = view_levels(p, l1, 0, controls=False)
+    view = still.levels_view
+    assert len(still.axes) == 4 and len(with_controls.axes) > 4
+    assert view.slider is None and view.check is None
+    assert view.describe() == with_controls.levels_view.describe()
+    view.set_level(0)
+    view.set_plain(True)
+    assert view.level == 0 and view.plain
+
+
 def test_spiders_can_be_dragged_spread_out_and_reset():
     import types
     import matplotlib
@@ -288,6 +306,171 @@ def test_the_levels_window_in_3d():
     x, y = block.to_px(5.0, -2.0)
     view._release(types.SimpleNamespace(inaxes=view.ax_block, xdata=x, ydata=y, button=1))
     assert view.block_moves[(p.block(l1, 0), False)][v] == pytest.approx((5.0, 2.0), abs=0.05)
+
+def test_the_levels_window_in_3d_with_rewritten_blocks_in_3d():
+    # block_3d=True: a rewritten block is drawn in 3D on the right too, as draw_block_3d draws it
+    import matplotlib
+    matplotlib.use('Agg')
+    from zxqec.spacetime import block_layout_3d, draw_block_3d, view_levels_3d
+    p = _small_program()
+    l1 = p.group_stages([(0, 1, 'measure', None, 'gpf'), (2, 4, 'rest')])
+    g, pos, _ = block_layout_3d(p, l1, 0)
+    assert set(pos) == set(g.vertices()) and all(len(xyz) == 3 for xyz in pos.values())
+    ends = [pos[b] for b in list(g.inputs()) + list(g.outputs())]
+    t0, t1 = min(t for _x, _y, t in ends), max(t for _x, _y, t in ends)
+    inner = [v for v in g.vertices() if v not in g.inputs() and v not in g.outputs()]
+    assert inner and all(t0 <= pos[v][2] <= t1 for v in inner)     # between the ends of its wires
+    assert draw_block_3d(p, l1, 0).axes[0].name == '3d'
+    view = view_levels_3d(p, l1, 0, block_3d=True).levels_view
+    assert view.ax_block3d.get_visible() and view.ax_block3d.has_data() and not view.ax_block.get_visible()
+    assert not view.button_spread.ax.get_visible() and not view.button_reset.ax.get_visible()
+    view.set_block(1)                                  # no rewrite: cut out, in 3D as before
+    assert view.ax_block3d.get_visible() and not view.ax_block.get_visible()
+    default = view_levels_3d(p, l1, 0).levels_view     # the default is unchanged: PyZX's drawing
+    assert default.ax_block.get_visible() and not default.ax_block3d.get_visible()
+
+
+def test_a_rewritten_block_before_a_permutation_keeps_its_wires_in_place():
+    # the cut after 'T' sits on the far side of the swap; the block's output ends must stay over their own wires
+    from zxqec.spacetime import block_layout_3d, get_logical_qubit
+    p = _small_program()
+    level = p.group_stages([(2, 2, 'T', None, 'gpf')], one_level=True)
+    g, pos, _ = block_layout_3d(p, level, 2)
+    place_in = {get_logical_qubit(g, b): pos[b][:2] for b in g.inputs()}
+    place_out = {get_logical_qubit(g, b): pos[b][:2] for b in g.outputs()}
+    assert place_out == place_in
+
+
+def _repetition_rounds(rewrite):
+    # two rounds of the checks Z0Z1 (ancilla 3) and Z1Z2 (ancilla 4); the second round rewritten
+    p = QProgram(5, bits=4, initial_states={3: '0', 4: '0'})
+    checks = (CNOT(0, 3), CNOT(1, 3), CNOT(1, 4), CNOT(2, 4))
+    p.add_circuit(_stage(*checks, Measurement(3, result_bit=0), Measurement(4, result_bit=1), qubits=5, bits=4),
+                  name='round 1')
+    p.add_circuit(_stage(Reset(3), Reset(4), *checks, Measurement(3, result_bit=2), Measurement(4, result_bit=3),
+                         qubits=5, bits=4), name='round 2')
+    return p, p.group_stages([(1, 1, 'round 2', None, rewrite)], one_level=True)
+
+
+def _checks(g):
+    """Spiders joined to no wire end, by phase: the qubits of the wire-end spiders each is joined to."""
+    from zxqec.spacetime import get_logical_qubit
+    ends = {next(iter(g.neighbors(b))): get_logical_qubit(g, b) for b in list(g.inputs()) + list(g.outputs())}
+    return {str(g.phase(v)): sorted({ends[u] for u in g.neighbors(v)}) for v in g.vertices()
+            if g.type(v) != VertexType.BOUNDARY and v not in ends and not any(u in g.inputs() or u in g.outputs()
+                                                                              for u in g.neighbors(v))}
+
+
+def test_gpf_checks_writes_one_spider_per_check():
+    # 'gpf' writes the round as c[2] + c[3] and c[3]; 'gpf_checks' as c[2] on qubits 0, 1 and c[3] on qubits 1, 2
+    p, level = _repetition_rounds('gpf')
+    assert sorted(_checks(p.reduced_block(level, 1).graph)) == ['c[2] + c[3]', 'c[3]']
+    plain = p.reduced_block(level, 1).graph
+    p, level = _repetition_rounds('gpf_checks')
+    g = p.reduced_block(level, 1).graph
+    assert _checks(g) == {'c[2]': [0, 1], 'c[3]': [1, 2]}
+    assert _equal(p, level, 1)
+    assert g.num_edges() <= plain.num_edges()
+
+
+def test_x_z_gpf_checks_writes_one_spider_per_check():
+    # the same in X-Z normal form: 'x-z gpf' writes c[2] + c[3] and c[3], 'x-z gpf_checks' one spider per check
+    p, level = _repetition_rounds('x-z gpf')
+    assert sorted(_checks(p.reduced_block(level, 1).graph)) == ['c[2] + c[3]', 'c[3]']
+    p, level = _repetition_rounds('x-z gpf_checks')
+    assert _checks(p.reduced_block(level, 1).graph) == {'c[2]': [0, 1], 'c[3]': [1, 2]}
+    assert _equal(p, level, 1)
+
+
+def test_neighbouring_blocks_can_have_different_normal_forms():
+    # one block Z-X, the next X-Z: each is rewritten by its own rewrite, and each keeps its map
+    p, _ = _repetition_rounds(None)
+    level = p.group_stages([(0, 0, 'round 1', None, 'gpf_checks'), (1, 1, 'round 2', None, 'x-z gpf_checks')],
+                           one_level=True)
+    assert [p.block(level, k).rewrite for k in range(2)] == ['gpf_checks', 'x-z gpf_checks']
+    assert _equal(p, level, 0) and _equal(p, level, 1)
+
+
+def test_one_spider_per_outcome_straightens_a_wire_bent_by_a_check_and_keeps_the_map():
+    # bend the straight round of 'gpf_checks': add check c[3] (qubits 1, 2) to the spider on output wire 0 (the row
+    # operation of zxqec.gpf.matrix, a check as the source); one_spider_per_outcome takes it off again
+    from zxqec.gpf import equal_for_all_assignments, one_spider_per_outcome, split_matrix
+    from zxqec.gpf.matrix import apply_matrix, phase_mod2
+    from zxqec.spacetime import get_logical_qubit
+    p, level = _repetition_rounds('gpf_checks')
+    straight = p.reduced_block(level, 1).graph
+    bent = straight.copy()
+    m = split_matrix(bent, VertexType.X)
+    check = next(i for i in m.free_rows() if str(m.phases[i]) == 'c[3]')
+    out0 = next(b for b in bent.outputs() if get_logical_qubit(bent, b) == 0)
+    target = next(i for i, r in enumerate(m.rows) if bent.connected(r, out0))
+    m.entries[target] = [a ^ b for a, b in zip(m.entries[target], m.entries[check])]
+    m.phases[target] = phase_mod2(m.phases[target] + m.phases[check])
+    apply_matrix(bent, m)
+    assert bent.num_edges() == straight.num_edges() + 2
+    fixed = bent.copy()
+    assert one_spider_per_outcome(fixed) == []
+    assert fixed.num_edges() == straight.num_edges()
+    names = sorted(set(boolean_variables(bent)) | set(boolean_variables(fixed)))
+    assert equal_for_all_assignments(bent, fixed, names, [])
+
+
+def test_min_stub_keeps_the_spiders_of_a_rewritten_block_off_its_wire_ends():
+    from zxqec.spacetime import block_layout_3d
+    p, level = _repetition_rounds('gpf_checks')
+    for stub in (0.0, 0.25, 0.4):
+        g, pos, _ = block_layout_3d(p, level, 1, min_stub=stub)
+        ends = list(g.inputs()) + list(g.outputs())
+        t0 = min(pos[b][2] for b in g.inputs())
+        t1 = max(pos[b][2] for b in g.outputs())
+        inner = [pos[v][2] for v in g.vertices() if v not in ends]
+        margin = stub * (t1 - t0) - 0.25 * len(inner)          # spiders on one spot are spread by quarter ticks
+        assert all(t0 + margin <= t <= t1 - margin for t in inner)
+    assert min(t - t0 for t in inner) > 0.25 * (t1 - t0)
+
+
+def test_by_outcomes_puts_a_check_where_its_outcome_is_measured():
+    # each check spider of 'gpf_checks' goes to its ancilla, at the time of its measurement; with 'measure' of the
+    # small program, c[0] goes to qubit 1, where it is measured, not to the correction it controls on qubit 2
+    from zxqec.spacetime import block_layout_3d, get_logical_qubit
+    from zxqec.spacetime.drawing import _positions
+    p, level = _repetition_rounds('gpf_checks')
+    g, pos, _ = block_layout_3d(p, level, 1, by_outcomes=True)
+    cut = p.block_graph(level, 1, classical=False)
+    cpos = _positions(cut, p.topology)
+    measured = {cut.vdata(v, 'result_symbol'): cpos[v] for v in cut.vertices()
+                if cut.vdata(v, 'outcome_type', None) == 'measurement'}
+    ends = set(g.inputs()) | set(g.outputs())
+    spiders = {str(g.phase(v)): pos[v] for v in g.vertices()      # the checks, not frame corrections on the wires
+               if str(g.phase(v)) in ('c[2]', 'c[3]') and not any(u in ends for u in g.neighbors(v))}
+    assert spiders == {'c[2]': measured['c[2]'], 'c[3]': measured['c[3]']}
+    assert spiders['c[2]'][0] == 3 and spiders['c[3]'][0] == 4         # the ancillas
+    p = _small_program()
+    level = p.group_stages([(1, 1, 'measure', None, 'gpf')], one_level=True)
+    g, pos, _ = block_layout_3d(p, level, 1, by_outcomes=True)
+    ends = set(g.inputs()) | set(g.outputs())
+    combined = [v for v in g.vertices() if str(g.phase(v)) == 'c[0]' and not any(u in ends for u in g.neighbors(v))]
+    assert combined and all(pos[v][:2] == (1.0, 0.0) for v in combined)
+
+
+def test_the_levels_window_in_3d_without_its_controls():
+    # a still figure: the 3D pictures, the block picture and the text only, no slider, buttons or view buttons;
+    # the methods still move it
+    import matplotlib
+    matplotlib.use('Agg')
+    from zxqec.spacetime import view_levels_3d
+    p = _small_program()
+    l1 = p.group_stages([(0, 1, 'measure', None, 'gpf'), (2, 4, 'rest')])
+    with_controls = view_levels_3d(p, l1, 0)
+    still = view_levels_3d(p, l1, 0, controls=False)
+    view = still.levels_view
+    assert len(still.axes) == 5 and len(with_controls.axes) > 5
+    assert view.slider is None and view.check is None and view.view_buttons == []
+    assert view.describe() == with_controls.levels_view.describe()
+    assert 'drag' not in view.ax_program.get_title() and 'drag' in with_controls.levels_view.ax_program.get_title()
+    view.set_block(1)
+    view.set_view('top')
+    assert view.index == 1 and view.ax_program.elev == 90
 
 def test_cultivation_level_by_level_finds_the_detectors_of_the_whole_reduction():
     # gpf on each block, then gpf on the four rewritten blocks glued: the detectors removed on the way span the

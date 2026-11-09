@@ -45,7 +45,10 @@ logical qubits, a logical Hadamard or CNOT included, and Stim checks that every
 detector and observable is deterministic. :func:`codedistance.circuitDistance` then finds
 the lightest undetectable fault set that flips an observable (by default with
 ``'MIPDist'``, an exact integer program; ``codedistance``'s Chromobius filter is
-switched off). Each input logical (X, then Z) is paired with every output logical
+switched off). ``MIPDist`` reports 0 when that fault set takes every distinct
+error of the detector error model, e.g. when the only error is one fault that
+flips the observable and no detector; the distance is then counted from those
+errors. Each input logical (X, then Z) is paired with every output logical
 whose final value is deterministic, and the smallest distance is reported.
 
 **Several logical qubits.** By default the code after the stages must have one
@@ -58,7 +61,10 @@ no circuit sees would commute with the images of all the input X and Z logicals,
 which generate every logical operator, so it is no error.
 
 The stages must be Clifford: a ``T`` gate, or a correction controlled by
-outcomes other than a Pauli, raises :class:`NotCliffordError`. The Z and X
+outcomes other than a Pauli, raises :class:`NotCliffordError`. A Pauli is fed
+forward from the XOR of some outcomes (``ParityControlled``) or from one outcome
+(OpenQASM's ``if(c==1) x q;`` on a register of one bit); a condition on several
+bits of a register, or on an outcome being 0, raises it too. The Z and X
 distances need *phase-free* stages (CNOTs, resets, measurements and Paulis; a
 Hadamard only as part of an X-basis reset or measurement), else
 :class:`NotPhaseFreeError` is raised.
@@ -79,13 +85,17 @@ the real circuit, since an X fault before a ``T`` becomes a Clifford error.
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 import itertools
+import operator
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any
 
 from pyzx.circuit import Circuit
+from pyzx.circuit.gates import XPhase, ZPhase
 
 from .program import QProgram
 
@@ -198,6 +208,35 @@ def _result_name(m: Any) -> str:
     return m.result_symbol if m.result_symbol is not None else 'c[{}]'.format(m.result_bit)
 
 
+def _fed_forward(s: int, g: Any) -> tuple[str, tuple[str, ...]]:
+    """(Pauli, outcomes) of a correction in stage ``s`` that Stim can feed forward: the Pauli is applied when the
+    XOR of the outcomes is 1.
+
+    A ``ParityControlled`` X or Z, or OpenQASM's ``if(c==1) x q;``: a PyZX ``ConditionalGate`` on a register of one
+    bit, with value 1, around a Z- or X-rotation by pi (the outcome is ``c[0]``, the ``result_symbol`` of
+    ``measure q -> c[0]``). Any other correction raises :class:`NotCliffordError`.
+    """
+    if type(g).__name__ == 'ParityControlled':
+        if g.gate not in ('X', 'Z'):
+            raise NotCliffordError("stage {}: {} is a correction Stim cannot express (only Paulis fed forward "
+                                   "from outcomes)".format(s, g))
+        return g.gate, g.bits
+    inner = g.inner_gate
+    phase = getattr(inner, 'phase', None)
+    if (not isinstance(inner, (ZPhase, XPhase)) or not isinstance(phase, (int, float, Fraction))
+            or Fraction(phase) % 2 != 1):
+        why = 'only Paulis fed forward from outcomes'
+    elif g.register_size != 1:
+        why = 'its condition is a product of the {} outcomes of {}; a Pauli is fed forward from one'.format(
+            g.register_size, g.condition_register)
+    elif g.condition_value != 1:
+        why = 'it applies the Pauli when {}[0] is 0; a Pauli is fed forward when an outcome is 1'.format(
+            g.condition_register)
+    else:
+        return 'Z' if isinstance(inner, ZPhase) else 'X', ('{}[0]'.format(g.condition_register),)
+    raise NotCliffordError("stage {}: {} is a correction Stim cannot express ({})".format(s, g, why))
+
+
 def _stage_lines(program: QProgram, first: int, last: int, kind: str, p: float,
                  keep: tuple[str, ...] = ()) -> list[tuple[int, Any]]:
     """(stage, line) for stages first..last with noise; measurements and fed-forward Paulis as tuples.
@@ -236,11 +275,9 @@ def _stage_lines(program: QProgram, first: int, last: int, kind: str, p: float,
                 if kind in ('full', 'X'):
                     out.append('X_ERROR({}) {}'.format(p, g.target))
                 out.append(('M', g.target, _result_name(g)))
-            elif name == 'ParityControlled':
-                if g.gate not in ('X', 'Z'):
-                    raise NotCliffordError("stage {}: {} is a correction Stim cannot express (only Paulis fed forward "
-                                           "from outcomes)".format(s, g))
-                out.append(('FF', g.gate, g.target, g.bits))
+            elif name in ('ParityControlled', 'ConditionalGate'):
+                pauli, bits = _fed_forward(s, g)
+                out.append(('FF', pauli, g.target, bits))
             elif name in keep:
                 out.append('{} {}'.format('T_DAG' if g.adjoint else 'T', g.target))
             else:
@@ -395,6 +432,20 @@ def _letters(code: Any, which: str, i: int = 0) -> str:
 
 # -- the distance ----------------------------------------------------------------------------
 
+def _every_error_distance(dem: Any) -> int | None:
+    """The distance when ``codedistance`` reports 0, from the detector error model ``dem``.
+
+    ``MIPDist`` reports 0 when there is no undetectable fault set that flips an observable, and also when the
+    lightest one takes every distinct error of ``dem`` (it reads a weight equal to their number as no solution): one
+    error ``L0`` that flips the observable and no detector gives 0, not 1. All the distinct errors together are then
+    the only candidate: their number if they flip no detector and some observable, else None.
+    """
+    errors = {frozenset(str(t) for t in inst.targets_copy() if not t.is_separator())
+              for inst in dem.flattened() if inst.type == 'error'} - {frozenset()}
+    flipped = functools.reduce(operator.xor, errors, frozenset())
+    return len(errors) if flipped and all(t.startswith('L') for t in flipped) else None
+
+
 def circuit_distance(program: QProgram, first: int = 0, last: int | None = None, kind: str | Sequence[str] = 'full',
                      p: float = 1e-3, method: str = 'MIPDist', code_in: Any = None, code_out: Any = None,
                      params: dict[str, Any] | None = None, several_logicals: bool = False) -> Any:
@@ -462,7 +513,7 @@ def circuit_distance(program: QProgram, first: int = 0, last: int | None = None,
                 continue
             with contextlib.redirect_stdout(io.StringIO()):
                 found = codedistance.circuitDistance(qc, method, params=dict(params or {}, filterCircuit=False))
-            result.by_logical[key] = int(found['d'])
+            result.by_logical[key] = int(found['d']) or _every_error_distance(dem)
     found_d = [d for d in result.by_logical.values() if d is not None]
     result.distance = min(found_d) if found_d else None
     return result
@@ -553,10 +604,13 @@ def z_distance_through_t(program: QProgram, first: int = 0, last: int | None = N
     x_basis = _x_basis_results(stripped, last)
     for s in range(first, last + 1):
         for g in stripped.stage_circuit(s).gates:
-            if type(g).__name__ == 'ParityControlled' and g.gate == 'X' and set(g.bits) & x_basis:
+            if type(g).__name__ not in ('ParityControlled', 'ConditionalGate'):
+                continue
+            pauli, bits = _fed_forward(s, g)
+            if pauli == 'X' and set(bits) & x_basis:
                 raise TRemovalError("stage {}: the X correction on qubit {} is controlled by {}, measured in the X "
                                     "basis, so a Z fault can trigger it, and the X error it then makes does not "
-                                    "commute with T".format(s, g.target, ', '.join(sorted(set(g.bits) & x_basis))))
+                                    "commute with T".format(s, g.target, ', '.join(sorted(set(bits) & x_basis))))
     fixed_in = stripped.code_at(first - 1).fixed_qubits() if first > 0 else {}
     out_letters = [_letters(code_out, 'X')]
     for a in (('X', 'Z') if code_in.k else (None,)):

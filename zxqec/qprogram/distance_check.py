@@ -59,9 +59,10 @@ from fractions import Fraction
 from typing import Any, Sequence
 
 from pyzx.circuit import Circuit
+from pyzx.circuit.gates import ConditionalGate, XPhase, ZPhase
 from pyzx.spacetime import used_qubits
 
-from .feedforward import ParityControlled
+from .feedforward import ParityControlled, _ConditionalRotation
 from .program import QProgram, Stage
 
 __all__ = ['KINDS', 'SplitProgram', 'split_by_gate_type', 'GroupCheck', 'DistanceCheck', 'check_distance']
@@ -87,6 +88,13 @@ def _role(gate: Any) -> str:
         return 'Clifford'
     if isinstance(gate, ParityControlled):
         return 'Clifford' if _clifford_phase(gate.angle) else 'non-Clifford'
+    if isinstance(gate, ConditionalGate) and isinstance(gate.inner_gate, (ZPhase, XPhase)):
+        # OpenQASM's if(c==v) g q: its phase is symbolic, so read the angle of the rotation it applies
+        try:
+            angle = _ConditionalRotation(gate).angle
+        except TypeError as e:                       # a symbolic angle
+            raise ValueError("cannot tell whether {} is Clifford".format(gate)) from e
+        return 'Clifford' if _clifford_phase(angle) else 'non-Clifford'
     qubits = used_qubits(gate)
     try:
         c = Circuit(max(qubits) + 1 if qubits else 1)
@@ -106,6 +114,8 @@ def _role(gate: Any) -> str:
 def _label(gate: Any) -> str:
     if isinstance(gate, ParityControlled):
         return 'parity-controlled ' + gate.gate
+    if isinstance(gate, ConditionalGate):
+        return 'if({}=={}) {}'.format(gate.condition_register, gate.condition_value, _label(gate.inner_gate))
     if type(gate).__name__ == 'T':
         return 'T^dag' if getattr(gate, 'adjoint', False) else 'T'
     return str(gate)
@@ -129,13 +139,18 @@ class SplitProgram:
 
 
 def _bits_written(gate: Any) -> set[Any]:
+    """The outcome a measurement writes, by its name in the diagram (``c[k]`` for result bit ``k``)."""
+    if getattr(gate, 'result_symbol', None) is not None:    # OpenQASM's measure q[0] -> c[0]
+        return {gate.result_symbol}
     bit = getattr(gate, 'result_bit', None)
-    return set() if bit is None else {bit}
+    return set() if bit is None else {'c[{}]'.format(bit)}
 
 
 def _bits_read(gate: Any) -> set[Any]:
     if isinstance(gate, ParityControlled):
-        return {int(b[2:-1]) if b.startswith('c[') else b for b in gate.bits}
+        return set(gate.bits)
+    if isinstance(gate, ConditionalGate):                   # if(c==v) reads every bit of the register c
+        return {'{}[{}]'.format(gate.condition_register, i) for i in range(gate.register_size)}
     return set()
 
 
@@ -148,7 +163,10 @@ def split_by_gate_type(program: QProgram) -> SplitProgram:
     gate. They are gathered at the place of the non-Clifford gate, past gates on
     other qubits, which commute with them; if a gate in between reads or writes a
     classical bit the move would reorder, nothing is moved and the non-Clifford
-    gate counts as a gate. The new program has the same qubits, bits, topology,
+    gate counts as a gate. A correction controlled by outcomes (:class:`ParityControlled`,
+    or OpenQASM's ``if(c==v) g q;``, a PyZX ``ConditionalGate``) counts as the rotation
+    it applies, Clifford when that is a multiple of pi/2, and reads the outcomes of its
+    condition. The new program has the same qubits, bits, topology,
     mapping, durations and initial states and is the same map; only the scheduling,
     the stages gates fall in, and the names of reset variables (which carry their
     stage) change. Permutation stages are kept and count as Clifford.
@@ -331,6 +349,7 @@ def _check_group(program: QProgram, first: int, last: int, labelling: str, max_r
                  max_terms: int, max_legs: int) -> GroupCheck:
     from ..gpf import (boolean_variables, consistent_assignments, decompose_terms, detector_rank, reduce_gpf,
                        sample_consistent_assignment)
+    from ..gpf.reduce import _pins, _product_outcomes, _split_products
 
     g = program.stages_graph(first, last, classical=False)
     check = GroupCheck(first, last, None, inputs=len(g.inputs()), outputs=len(g.outputs()))
@@ -339,12 +358,21 @@ def _check_group(program: QProgram, first: int, last: int, labelling: str, max_r
         check.note = 'the diagram is zero in every run'
         return check
     names = sorted(set(boolean_variables(g)) | {str(v) for c in res.constraints for v in c.free_vars()})
-    free = len(names) - detector_rank(res.constraints)
-    check.of_runs = 2 ** free
+    # a detector with a product of outcomes (a condition on several outcomes at once) cannot be solved for over
+    # GF(2): the values of the outcomes it reads are listed (each extends to the same number of runs of the linear
+    # detectors) and fixed in turn, so the runs are counted exactly, and a sampled run is a random value then a
+    # random run of the linear detectors with it
+    linear, products = _split_products(res.constraints)
+    pins = [_pins(a) for a in _product_outcomes(res.constraints, names)] if products else [[]]
+    free = len(names) - detector_rank(linear + pins[0])
+    check.of_runs = len(pins) * 2 ** free
     if check.of_runs <= max_runs:
-        runs = consistent_assignments(res.constraints, names)
+        runs = [run for pin in pins for run in consistent_assignments(linear + pin, names)]
     else:
-        runs = [sample_consistent_assignment(res.constraints, names, rng) for _ in range(max_runs)]
+        runs = []
+        for _ in range(max_runs):
+            pin = pins[rng.randrange(len(pins))] if len(pins) > 1 else pins[0]
+            runs.append(sample_consistent_assignment(linear + pin, names, rng))
         check.all_runs = False
     check.runs = len(runs)
     same, single = [], []

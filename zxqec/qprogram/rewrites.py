@@ -30,6 +30,10 @@ The rewrites known by name (:data:`REWRITES`):
 * ``'gpf'`` -- :func:`~zxqec.gpf.reduce_gpf`, gadget layer simplified; the
   detectors it removes are kept with the result;
 * ``'gpf-no-gadgets'`` -- the same with the gadgets held fixed;
+* ``'gpf_checks'`` -- ``'gpf'``, then the checks one per spider
+  (:func:`~zxqec.gpf.one_spider_per_outcome`): a syndrome round comes out with
+  one spider per check, its phase the check's outcome, joined to the qubits of
+  that check, as the protocol measures it;
 * ``'full_reduce'``, ``'clifford_simp'``, ``'spider_simp'`` -- PyZX's simplifiers;
 * ``'teleport_reduce'`` -- PyZX's phase teleportation, which keeps the shape of
   the diagram and only moves phases;
@@ -37,7 +41,17 @@ The rewrites known by name (:data:`REWRITES`):
   of a derivation by hand (:mod:`zxqec.gpf.rules`): measurements as effects and
   swaps as crossing wires; states copied and one-legged spiders fused; identities
   removed and cancelling phases fused. Levelling up one part of a circuit after
-  another with them gives the diagrams of Eq. (6.42) of L. Yeh's thesis.
+  another with them gives the diagrams of Eq. (6.42) of L. Yeh's thesis;
+* ``'copy results'`` -- ``'copy and fuse'`` that also copies states such as ``|a>``
+  whose phase is a Boolean variable (the parity check of Eq. (4.8));
+* ``'phase gadgets'``, ``'spider nest'`` -- the non-Pauli phases on phase gadgets,
+  drawn along the wires, without and with the gadget layer simplified (the
+  spider-nest identities): the diagrams of Eqs. (6.45) and (6.46);
+* ``'x-z gpf'`` -- the normal form with the colours swapped, an X-spider on each
+  input (the decoder of Eq. (6.49)); ``'x-z gpf_checks'`` -- the same with the
+  checks one per spider, as ``'gpf_checks'``;
+* ``'unfuse outcomes'`` -- each phase that depends on outcomes on a spider of its
+  own, to show where the outcome phases are (correction finding).
 
 :func:`register_rewrite` adds more: a function from a diagram to a diagram, to a
 ``GPFResult``, or to ``(diagram, detectors)``. Every rewrite must keep the linear
@@ -78,6 +92,16 @@ def _gpf(gadgets: bool) -> Callable[[BaseGraph], Any]:
     return run
 
 
+def _gpf_checks(g: BaseGraph) -> Any:
+    from ..gpf import one_spider_per_outcome
+    result = _gpf(True)(g)
+    if result.is_zero:
+        return result
+    graph = result.to_graph()
+    detectors = [c for c in result.constraints if hasattr(c, 'free_vars') and c.free_vars()]
+    return graph, detectors + [c for c in one_spider_per_outcome(graph) if hasattr(c, 'free_vars') and c.free_vars()]
+
+
 def _pyzx(name: str) -> Callable[[BaseGraph], Any]:
     def run(g: BaseGraph) -> Any:
         import pyzx.simplify as simplify
@@ -93,10 +117,10 @@ def _pyzx(name: str) -> Callable[[BaseGraph], Any]:
     return run
 
 
-def _rules(name: str) -> Callable[[BaseGraph], Any]:
+def _rules(name: str, **kwargs: Any) -> Callable[[BaseGraph], Any]:
     def run(g: BaseGraph) -> Any:
         from ..gpf import rules
-        return getattr(rules, name)(g.copy())
+        return getattr(rules, name)(g.copy(), **kwargs)
     return run
 
 
@@ -104,13 +128,20 @@ def _rules(name: str) -> Callable[[BaseGraph], Any]:
 REWRITES: dict[str, Callable[[BaseGraph], Any]] = {
     'gpf': _gpf(True),
     'gpf-no-gadgets': _gpf(False),
+    'gpf_checks': _gpf_checks,
     'full_reduce': _pyzx('full_reduce'),
     'clifford_simp': _pyzx('clifford_simp'),
     'spider_simp': _pyzx('spider_simp'),
     'teleport_reduce': _pyzx('teleport_reduce'),
     'thesis notation': _rules('thesis_notation'),
     'copy and fuse': _rules('copy_and_fuse'),
+    'copy results': _rules('copy_and_fuse', results=True),
     'remove identities': _rules('remove_identities'),
+    'phase gadgets': _rules('phase_gadgets'),
+    'spider nest': _rules('phase_gadgets', simplify=True),
+    'x-z gpf': _rules('x_z_normal_form'),
+    'x-z gpf_checks': _rules('x_z_normal_form', checks=True),
+    'unfuse outcomes': _rules('unfuse_outcomes'),
 }
 
 

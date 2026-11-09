@@ -33,9 +33,28 @@ level-up rewrites by the same names (:mod:`zxqec.qprogram.rewrites`):
 * :func:`copy_and_fuse` -- states (``|0>``, ``|1>``, ``|+>``, ``|->``) copied through
   spiders of the other colour, spiders with one leg fused into their neighbour of
   the same colour, and identities on a straight piece of wire removed; an identity
-  where a wire turns is kept, to show the turn;
+  where a wire turns is kept, to show the turn; with ``results=True`` (``'copy
+  results'``) also states such as ``|a>``, whose phase ``a pi`` is a Boolean variable;
 * :func:`remove_identities` -- every identity spider removed, and neighbouring
   spiders of the same colour whose phases cancel (``c[0]`` and ``c[0]``) fused.
+
+and two more for derivations with phase gadgets, such as Eqs. (6.45) and (6.46)
+(the transversal CCZ of the ``[[8,3,2]]`` code), level-up rewrites ``'phase
+gadgets'`` and ``'spider nest'``:
+
+* :func:`phase_gadgets` -- the diagram reduced to GPF with its non-Pauli phases on
+  phase gadgets (a ``T`` after a ladder of CNOTs and before its inverse becomes a
+  gadget on the parity the ladder computes), written back along the wires: each
+  wire one Z-spider, a gadget on one wire a phase on it, the other gadgets beside
+  the wires they touch; with ``simplify=True`` the gadget layer is simplified
+  first (:func:`~zxqec.gpf.simplify_gadgets`: the spider-nest identities);
+* :func:`unfuse_outcomes` -- each phase that depends on measurement outcomes split
+  off into a spider of its own (level-up rewrite ``'unfuse outcomes'``), the first
+  step of L. Yeh's correction finding: the outcome phases ``j pi`` made visible;
+* :func:`x_z_normal_form` -- the normal form with the colours swapped (level-up
+  rewrite ``'x-z gpf'``): an X-spider for each input and a Z-spider for each
+  output, as the adjoint of an encoder's Z-X normal form is, e.g. the decoder in
+  Eq. (6.49).
 
 Each keeps the linear map, the scalar included (a closed piece becomes part of
 the scalar, which may depend on the results).
@@ -50,7 +69,8 @@ from pyzx.graph.base import BaseGraph
 from pyzx.symbolic import Poly
 from pyzx.utils import vertex_is_zx
 
-__all__ = ['copy_leaf', 'thesis_notation', 'copy_and_fuse', 'remove_identities']
+__all__ = ['copy_leaf', 'thesis_notation', 'copy_and_fuse', 'remove_identities', 'phase_gadgets',
+           'x_z_normal_form', 'unfuse_outcomes']
 
 
 def _is_pauli(phase: Any) -> bool:
@@ -153,7 +173,7 @@ def thesis_notation(g: BaseGraph) -> BaseGraph:
             if v in g.vertices() and _is_identity(g, v):
                 changed |= remove_id(g, v)
         for v, w in _leaves(g):
-            if g.type(w) != VertexType.BOUNDARY and g.edge_type(g.edge(v, w)) == EdgeType.HADAMARD:
+            if g.edge_type(g.edge(v, w)) == EdgeType.HADAMARD:
                 changed |= color_change(g, v)
         for v, w in _leaves(g):
             if v in g.vertices() and g.vdata(v, 'outcome_type', None) == 'measurement' and g.phase(w) == 0:
@@ -169,14 +189,18 @@ def thesis_notation(g: BaseGraph) -> BaseGraph:
     return g
 
 
-def copy_and_fuse(g: BaseGraph) -> BaseGraph:
+def copy_and_fuse(g: BaseGraph, results: bool = False) -> BaseGraph:
     """States copied, spiders with one leg fused, identities on straight wires removed (module docstring); in place.
 
     A state is a spider with one leg and phase 0 or pi; it is copied (:func:`copy_leaf`)
     through a neighbour of the other colour whose phase is not a measurement result.
-    A spider with one leg of any phase is fused into its neighbour of the same colour.
-    An identity spider is removed when both its neighbours sit on its own wire (the
-    same ``qubit`` coordinate); one where the wire turns stays. Repeated until none applies.
+    With ``results=True`` (level-up rewrite ``'copy results'``) a state whose phase is
+    a parity of Boolean variables, such as ``a pi`` for a basis state ``|a>`` or a
+    measurement result, is copied too, through a neighbour of phase 0. A spider with
+    one leg of any phase is fused into its neighbour of the same colour; a spider left
+    with no leg becomes part of the scalar. An identity spider is removed when both its
+    neighbours sit on its own wire (the same ``qubit`` coordinate); one where the wire
+    turns stays. Repeated until none applies.
     """
     from pyzx.rewrite_rules.remove_id_rule import remove_id
     from pyzx.utils import VertexType
@@ -184,7 +208,7 @@ def copy_and_fuse(g: BaseGraph) -> BaseGraph:
     while changed:
         changed = False
         for v, w in _leaves(g):
-            if (v in g.vertices() and w in g.vertices() and not isinstance(g.phase(v), Poly)
+            if (v in g.vertices() and w in g.vertices() and (results or not isinstance(g.phase(v), Poly))
                     and g.type(w) != VertexType.BOUNDARY and not isinstance(g.phase(w), Poly)):
                 try:
                     copy_leaf(g, v)
@@ -228,3 +252,151 @@ def _cancel(a: Any, b: Any) -> bool:
     if isinstance(total, Poly):
         return total == 0
     return Fraction(total) % 2 == 0
+
+
+def phase_gadgets(g: BaseGraph, simplify: bool = False) -> tuple[BaseGraph, list[Any]]:
+    """``g`` with its non-Pauli phases on phase gadgets, drawn along its wires; returns ``(diagram, detectors)``.
+
+    ``g`` is reduced to GPF (:func:`~zxqec.gpf.reduce_gpf`; the gadget layer is
+    simplified as a whole only with ``simplify``, which applies the spider-nest
+    identities) and written along the wires of ``g``: an output's X-spider joined
+    to one Z-spider only is an identity and is removed, so the Z-spider of each
+    input runs from the input to its output; a gadget on one Z-spider becomes a
+    phase on it. Each Z-spider is drawn on the wire of its input (or output), one
+    with neither -- a variable inside the diagram -- below the wires, all in one
+    column; each gadget just below the lowest wire it touches, its phase beside it,
+    the gadgets spread over two rows each, starting at the first row of ``g``. The
+    detectors are those of the reduction.
+    """
+    from pyzx.rewrite_rules.fuse_rule import fuse
+    from pyzx.rewrite_rules.remove_id_rule import remove_id
+    from pyzx.utils import EdgeType, VertexType
+
+    from ..spacetime.subdiagram import get_logical_qubit
+    from .normal_form import GPF_ROLE_KEY
+    from .reduce import reduce_gpf
+
+    wire = {}                              # each boundary's wire: where its neighbour sits
+    for b in list(g.inputs()) + list(g.outputs()):
+        (n,) = list(g.neighbors(b))
+        wire[(b in g.inputs(), get_logical_qubit(g, b))] = (
+            g.qubit(n) if g.type(n) != VertexType.BOUNDARY else g.qubit(b))
+    rows = [g.row(v) for v in g.vertices() if g.type(v) != VertexType.BOUNDARY] or [0]
+    first = min(rows)
+    for v in g.vertices():                 # markings of an earlier reduction no longer hold
+        if g.vdata(v, GPF_ROLE_KEY, None) is not None:
+            g.set_vdata(v, GPF_ROLE_KEY, None)
+    res = reduce_gpf(g, gadgets=simplify)
+    h = res.to_graph()
+    for v in h.vertices():
+        if h.vdata(v, GPF_ROLE_KEY, None) is not None:
+            h.set_vdata(v, GPF_ROLE_KEY, None)
+    ins, outs = list(h.inputs()), list(h.outputs())
+    for o in outs:
+        (x,) = list(h.neighbors(o))
+        if h.type(x) == VertexType.X and _is_identity(h, x):
+            remove_id(h, x)
+    for leaf in [v for v in h.vertices() if h.type(v) == VertexType.Z and h.vertex_degree(v) == 1]:
+        (hub,) = list(h.neighbors(leaf))
+        if h.type(hub) == VertexType.X and _is_identity(h, hub):
+            (z,) = [w for w in h.neighbors(hub) if w != leaf]
+            if h.type(z) == VertexType.Z and h.edge_type(h.edge(hub, z)) == EdgeType.SIMPLE:
+                remove_id(h, hub)
+                fuse(h, z, leaf)
+    on: dict[Any, float] = {}
+    for is_input, boundaries in ((True, ins), (False, outs)):
+        for b in boundaries:
+            h.set_qubit(b, wire.get((is_input, get_logical_qubit(h, b)), h.qubit(b)))
+            (z,) = list(h.neighbors(b))
+            if z not in on and h.type(z) != VertexType.BOUNDARY:
+                on[z] = h.qubit(b)
+    hubs = [v for v in h.vertices() if h.type(v) == VertexType.X
+            and any(h.type(w) == VertexType.Z and h.vertex_degree(w) == 1 for w in h.neighbors(v))]
+    inside = [v for v in h.vertices() if h.type(v) == VertexType.Z and h.vertex_degree(v) > 1 and v not in on]
+    lowest = max(list(on.values()) + [0])
+    for k, z in enumerate(inside):
+        on[z] = lowest + 1 + k
+    width = max(4, 2 * len(hubs) + 2)
+    mid = first + width / 2
+    for z, q in on.items():
+        h.set_qubit(z, q)
+        h.set_row(z, mid)
+    hubs.sort(key=lambda v: sorted(on.get(w, lowest + 1) for w in h.neighbors(v)))
+    below: dict[float, int] = {}          # gadgets already drawn below each wire
+    for k, hub in enumerate(hubs):
+        q = max([on[w] for w in h.neighbors(hub) if w in on] + [0])
+        j = below.get(q, 0)
+        below[q] = j + 1
+        r = first + 1 + k * (width - 2) / max(1, len(hubs) - 1)
+        if abs(r - mid) < 0.5:             # the middle row is the wires' spiders'
+            r = mid + 0.75
+        h.set_row(hub, r)
+        h.set_qubit(hub, q + 0.4 + 0.25 * (j % 3))
+        for leaf in [w for w in h.neighbors(hub) if h.vertex_degree(w) == 1]:
+            h.set_row(leaf, r - 0.6)
+            h.set_qubit(leaf, h.qubit(hub))
+    for b in ins:
+        h.set_row(b, first - 1)
+    for b in outs:
+        h.set_row(b, first + width + 1)
+    return h, list(res.detectors)
+
+
+def x_z_normal_form(g: BaseGraph, checks: bool = False) -> tuple[BaseGraph, list[Any]]:
+    """``g`` in X-Z normal form: the Z-X normal form (:func:`~zxqec.gpf.reduce_gpf`) with the colours swapped.
+
+    Swapping the colour of every spider, edges untouched, gives ``g`` with a
+    Hadamard on each boundary wire; that is reduced to the Z-X normal form, and the
+    colours are swapped back, which takes the Hadamards off again. The result: an
+    X-spider on each input, a Z-spider on each output, phase gadgets with hubs of
+    the other colour. With ``checks``, the checks are written one per spider
+    (:func:`~zxqec.gpf.one_spider_per_outcome`, before the colours are swapped
+    back). Returns ``(diagram, detectors)``.
+    """
+    from pyzx.utils import toggle_vertex
+
+    from .matrix import one_spider_per_outcome
+    from .normal_form import GPF_ROLE_KEY
+    from .reduce import reduce_gpf
+
+    def swap(h: BaseGraph) -> None:
+        for v in h.vertices():
+            if vertex_is_zx(h.type(v)):
+                h.set_type(v, toggle_vertex(h.type(v)))
+            if h.vdata(v, GPF_ROLE_KEY, None) is not None:
+                h.set_vdata(v, GPF_ROLE_KEY, None)
+    h = g.copy()
+    swap(h)
+    res = reduce_gpf(h)
+    out = res.to_graph()
+    detectors = list(res.detectors)
+    if checks:
+        detectors += [c for c in one_spider_per_outcome(out) if hasattr(c, 'free_vars') and c.free_vars()]
+    swap(out)
+    return out, detectors
+
+
+def unfuse_outcomes(g: BaseGraph) -> BaseGraph:
+    """Each Z- or X-spider whose phase depends on outcomes, with that part split off; ``g`` in place.
+
+    A phase ``alpha + (c[i] + c[j] + ...) pi`` becomes ``alpha`` on the spider and
+    ``(c[i] + c[j] + ...) pi`` on a new spider of the same colour with one leg, joined
+    to it by a plain edge (spider fusion read backwards) and drawn below it, a little to
+    the left, so that its phase does not cover the next qubit's spider. A
+    spider with one leg is left as it is: its phase is already on its own.
+    """
+    from ..codes.phasepoly import affine_parts
+    for v in list(g.vertices()):
+        if not vertex_is_zx(g.type(v)) or g.vertex_degree(v) <= 1 or not isinstance(g.phase(v), Poly):
+            continue
+        try:
+            names, _const = affine_parts(g.phase(v))
+        except ValueError:
+            continue
+        if not names:
+            continue
+        phase = g.phase(v)
+        g.set_phase(v, sum((Fraction(c) for c, t in phase.terms if not t.vars), Fraction(0)))
+        leaf = g.add_vertex(g.type(v), g.qubit(v) + 0.25, g.row(v) - 0.4, Poly([(c, t) for c, t in phase.terms if t.vars]))
+        g.add_edge((v, leaf))
+    return g

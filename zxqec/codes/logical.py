@@ -76,7 +76,7 @@ from pyzx.graph.scalar import Scalar
 from pyzx.utils import EdgeType
 
 from ..gpf import GPFResult, boolean_variables, measurement_report, reduce_gpf
-from ..gpf.reduce import sample_consistent_assignment
+from ..gpf.reduce import consistent_assignments, detector_rank, evaluate_phase, sample_consistent_assignment
 from ..spacetime.subdiagram import get_logical_qubit, set_logical_qubit
 from .code import StabilizerCode
 
@@ -341,7 +341,10 @@ class LogicalAction:
         after it, with the identity on the bent inputs, is among them up to sign.
         Runs in which such a stabilizer has the other sign put the image
         orthogonal to the code; there the logical action is the zero map, which
-        :meth:`branches` already shows. ``None`` if the codes or the block are not
+        :meth:`branches` already shows. As in :meth:`branches`, an outcome measured
+        outside the block that the detectors of its ``context`` fix is read as its
+        value (the runs with the other value never happen); the block's own
+        outcomes stay free. ``None`` if the codes or the block are not
         known, or the Choi state's code cannot be read.
         """
         if self._stays is None:
@@ -354,6 +357,10 @@ class LogicalAction:
         if self.block is None or self.code_in is None or self.code_out is None:
             return None
         first = glue(_labelled_encoder(self.code_in), self.block)
+        fixed = _fixed_outcomes(self.context) if self.context else {}
+        values = {v: fixed[v] for v in boolean_variables(first) if v in fixed}
+        if values:                        # outcomes before the block that the program fixes, as in branches
+            first = first.substitute_variables(values)
         outs = list(first.outputs())
         where = {get_logical_qubit(first, b): j for j, b in enumerate(outs)}
         choi = first.copy()
@@ -432,13 +439,34 @@ class LogicalAction:
                 "the reduced diagram depends on {} distinct parities of the outcomes; trying all 2^{} "
                 "combinations is above the limit of 2^{}".format(len(plist), len(plist), limit))
         runs = []
-        for values in itertools.product((0, 1), repeat=len(plist)):
-            targets = [p + 1 if val else p for p, val in zip(plist, values)]
-            try:
-                a = sample_consistent_assignment(constraints + targets, names, _rng(values))
-            except ValueError:
-                continue
-            runs.append((values, a, self.matrix(a)))
+        products = [c for c in constraints if not _is_affine(c)]
+        if not products and all(_is_affine(p) for p in plist):
+            for values in itertools.product((0, 1), repeat=len(plist)):
+                targets = [p + 1 if val else p for p, val in zip(plist, values)]
+                try:
+                    a = sample_consistent_assignment(constraints + targets, names, _rng(values))
+                except ValueError:                 # the linear system has no solution: no such run
+                    continue
+                runs.append((values, a, self.matrix(a)))
+        else:
+            # a phase or a detector with a product of outcomes (a correction "if c[0] = 1 and c[1] = 0", a
+            # condition on the whole register) cannot be solved for over GF(2): list the runs the linear
+            # detectors allow, drop those on which a detector with a product is 1, and keep the one with
+            # the fewest outcomes 1 for each combination of the phases' values
+            linear = [c for c in constraints if _is_affine(c)]
+            free = len(names) - detector_rank(linear)
+            if free > 16:
+                raise TooManyRunsError(
+                    "the reduced diagram has a phase or a detector with a product of outcomes, so its runs are "
+                    "listed; {} free outcomes give 2^{} runs, above the limit of 2^16".format(free, free))
+            best: dict[tuple[int, ...], dict[str, int]] = {}
+            for a in consistent_assignments(linear, names):
+                if any(evaluate_phase(c, a) for c in products):
+                    continue
+                values = tuple(evaluate_phase(p, a) for p in plist)
+                if values not in best or sum(a.values()) < sum(best[values].values()):
+                    best[values] = a
+            runs = [(values, a, self.matrix(a)) for values, a in sorted(best.items())]
         out = []
         if runs:
             ref = runs[0][2]
@@ -638,10 +666,19 @@ _ONE = {'I': _I, 'H': _H, 'S': _S, 'S^dag': _S.conj(), 'T': _T, 'T^dag': _T.conj
 _CNOT = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]])
 _TWO = {'CNOT(0->1)': _CNOT, 'CNOT(1->0)': np.kron(_H, _H) @ _CNOT @ np.kron(_H, _H),
         'CZ': np.diag([1, 1, 1, -1]), 'SWAP': np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])}
+_THREE = {'I': np.eye(8), 'CCZ': np.diag([1, 1, 1, 1, 1, 1, 1, -1])}
 _STATES = {'|0>': np.array([1, 0]), '|+>': np.array([1, 1]) / np.sqrt(2),
            '|+i>': np.array([1, 1j]) / np.sqrt(2),
            'T|+>': np.array([1, np.exp(1j * np.pi / 4)]) / np.sqrt(2),
            'T^dag|+>': np.array([1, np.exp(-1j * np.pi / 4)]) / np.sqrt(2)}
+# lattice surgery on the logical level (Kissinger, "Phase-free ZX diagrams are CSS codes", Section 7.1): a split
+# is a Z- or X-spider with one leg in and two out, an isometry; a merge is the same spider the other way round
+# after the measurement of ZZ or XX, one name per outcome, since the two differ by a Pauli on an input
+_Z_SPLIT = np.array([[1, 0], [0, 0], [0, 0], [0, 1]])
+_HH = np.kron(_H, _H)
+_SPLITS = {'Z-split': _Z_SPLIT, 'X-split': _HH @ _Z_SPLIT @ _H}
+_MERGES = {'Z-merge, ZZ = +1': _Z_SPLIT.T, 'Z-merge, ZZ = -1': _Z_SPLIT.T @ np.kron(_X, _I),
+           'X-merge, XX = +1': _H @ _Z_SPLIT.T @ _HH, 'X-merge, XX = -1': _H @ _Z_SPLIT.T @ np.kron(_X, _I) @ _HH}
 
 
 def _proportional(a: np.ndarray, b: np.ndarray) -> bool:
@@ -685,11 +722,20 @@ def _library(k_in: int, k_out: int) -> dict[str, np.ndarray]:
         for (a, ma), (b, mb) in itertools.product(_ONE.items(), repeat=2):
             lib['{} (x) {}'.format(a, b) if (a, b) != ('I', 'I') else 'I'] = np.kron(ma, mb)
         return lib
+    if k_in == k_out == 3:
+        return dict(_THREE)
     if k_in == 0 and k_out == 1:
         return {'prepares ' + n: v.reshape(2, 1) for n, v in _STATES.items()}
+    if k_in == 0 and k_out == 3:
+        plus = np.ones(8) / np.sqrt(8)
+        return {'prepares |+++>': plus.reshape(8, 1), 'prepares CCZ|+++>': (_THREE['CCZ'] @ plus).reshape(8, 1)}
     if k_in == 1 and k_out == 0:
         return {'Z measurement': np.array([[1, 0]]), 'X measurement': np.array([[1, 1]]) / np.sqrt(2),
                 'Y measurement': np.array([[1, -1j]]) / np.sqrt(2)}
+    if k_in == 1 and k_out == 2:
+        return dict(_SPLITS)
+    if k_in == 2 and k_out == 1:
+        return dict(_MERGES)
     return {}
 
 
@@ -801,6 +847,12 @@ def _fixed_outcomes(detectors: list[Any]) -> dict[str, int]:
         if len(vs) == 1:
             out[vs[0]] = row[-1]
     return out
+
+
+def _is_affine(p: Any) -> bool:
+    """Whether a phase is a constant plus a sum of single outcomes: no product of outcomes (mod 2)."""
+    return all(Fraction(coeff) % 2 == 0 or (len(term.vars) <= 1 and all(e == 1 for _v, e in term.vars))
+               for coeff, term in p.terms)
 
 
 def _parity_key(p: Any) -> Any:

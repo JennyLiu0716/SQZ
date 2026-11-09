@@ -24,7 +24,7 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = ['as_matrix', 'rref', 'rank', 'nullspace', 'reduce_mod', 'in_rowspace', 'solve',
-           'complement_basis']
+           'complement_basis', 'span']
 
 
 def as_matrix(rows: object, ncols: int) -> np.ndarray:
@@ -123,3 +123,26 @@ def complement_basis(sub: np.ndarray, whole: np.ndarray) -> np.ndarray:
     rs, ps, _ = rref(sub) if sub.size else (np.zeros((0, cols), np.uint8), [], None)
     reduced = as_matrix([reduce_mod(v, rs, ps) for v in whole], cols)
     return rref(reduced)[0]
+
+
+def span(a: np.ndarray, cap: int = 20) -> np.ndarray:
+    """Every element of the row space of ``a`` over GF(2), the zero row included.
+
+    The ``2^rank`` elements come lightest first, and those of the same weight in
+    the order of their supports (the positions of their ones): the order in
+    which :func:`~zxqec.codes.code_of` picks its logical operators, and its
+    generators when their signs do not depend on outcomes. Raises ``ValueError`` if the rank is above ``cap``.
+    """
+    cols = a.shape[1]
+    r = rref(a)[0] if a.size else np.zeros((0, cols), np.uint8)
+    if r.shape[0] > cap:
+        raise ValueError("a row space of dimension {} has too many elements to list".format(r.shape[0]))
+    elements = []
+    for bits in range(1 << r.shape[0]):
+        v = np.zeros(cols, dtype=np.uint8)
+        for i in range(r.shape[0]):
+            if bits >> i & 1:
+                v ^= r[i]
+        elements.append(v)
+    elements.sort(key=lambda v: (int(v.sum()), tuple(int(j) for j in np.flatnonzero(v))))
+    return as_matrix(elements, cols)

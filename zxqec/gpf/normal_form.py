@@ -362,7 +362,7 @@ def is_gpf(g: BaseGraph[VT, ET]) -> bool:
     return True
 
 
-def layout_gpf(g: BaseGraph[VT, ET]) -> None:
+def layout_gpf(g: BaseGraph[VT, ET], leaf_gap: float = 0.7) -> None:
     """Lay out a GPF diagram for PyZX's drawing functions (``zx.draw``, ``zx.draw_matplotlib``).
 
     Qubits (top to bottom): the X-spider of output ``j`` on line ``j``, then the
@@ -373,7 +373,7 @@ def layout_gpf(g: BaseGraph[VT, ET]) -> None:
     outputs ``2 + gap``, with ``gap = max(2, height / 3)`` so that the edges
     between the layers stay readable in a tall diagram (PyZX draws rows and
     lines on the same scale). A boundary is on the line of its spider, and a
-    leaf beside its hub.
+    leaf beside its hub, ``leaf_gap`` rows away (wider for long phase labels).
     """
     ins, outs = list(g.inputs()), list(g.outputs())
     bnd = set(ins) | set(outs)
@@ -414,4 +414,4 @@ def layout_gpf(g: BaseGraph[VT, ET]) -> None:
     for v in leaves:
         (stem,) = list(g.neighbors(v))
         g.set_qubit(v, g.qubit(stem))
-        g.set_row(v, g.row(stem) + (-0.7 if g.type(stem) == VertexType.Z else 0.7))
+        g.set_row(v, g.row(stem) + (-leaf_gap if g.type(stem) == VertexType.Z else leaf_gap))

@@ -28,6 +28,11 @@ layers (Kissinger, "Phase-free ZX diagrams are CSS codes", 2022):
   row; the phases of the output X-spiders give their signs;
 * a Hadamard recorded on an output wire swaps ``X`` and ``Z`` on that qubit.
 
+:func:`code_layers` returns what is read: the reduced diagram and its rows
+(the input Z-spiders' rows ``L``, the internal ones' rows ``M``), with names for
+the spiders. :func:`stabilizes` checks a Pauli string on a diagram itself, by
+comparing tensors.
+
 Codes that are not CSS in any Hadamard frame (the ``[[5,1,3]]`` code, or the
 Steane code after one ``S``) have ``pi/2`` phase gadgets in the reduced diagram.
 Flipping the bits of a combination ``a`` of internal Z-spiders then changes the
@@ -62,12 +67,13 @@ from pyzx.graph import Graph
 from pyzx.graph.base import BaseGraph
 from pyzx.utils import EdgeType, VertexType
 
-from ..gpf import has_boundary_hadamard, is_leaf, is_stem, reduce_gpf
+from ..gpf import GPFResult, has_boundary_hadamard, is_leaf, is_stem, reduce_gpf
 from .pauli import phase_sum as _sum
 from .gf2 import as_matrix, complement_basis, in_rowspace, nullspace, reduce_mod, rref, solve
 from .pauli import PauliString
 
-__all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of']
+__all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of', 'CodeLayers', 'code_layers',
+           'stabilizes']
 
 
 class NotACodeError(ValueError):
@@ -312,6 +318,56 @@ class StabilizerCode:
             return [d]
         return [d.restricted(cols) for cols in sorted(groups.values())]
 
+    def separated(self, parts: list[list[Any]]) -> 'StabilizerCode':
+        """The code read as separate codes on ``parts`` (lists of qubit labels covering every qubit).
+
+        Only the stabilizers that act within a single part are kept, with their
+        signs; the logical operators are chosen again from what is left. After a
+        lattice-surgery split, the two patches still share a stabilizer (the
+        product of their logical ``Z``), so the code read off the program has one
+        logical qubit; treating the patches as separate codes from then on, as
+        the logical description of the split does, is this code. CSS codes only.
+        """
+        if self._mixed:
+            raise NotImplementedError("separated: a code that is not CSS")
+        index = {q: j for j, q in enumerate(self.qubits)}
+        part_of: dict[int, int] = {}
+        for i, part in enumerate(parts):
+            for q in part:
+                if q not in index or index[q] in part_of:
+                    raise ValueError("qubit {!r} is not in the code, or in two parts".format(q))
+                part_of[index[q]] = i
+        n = self.n
+        if len(part_of) != n:
+            raise ValueError("the parts leave out qubits {}".format(
+                [q for j, q in enumerate(self.qubits) if j not in part_of]))
+
+        def within(rows: np.ndarray, signs: list[Any]) -> tuple[np.ndarray, list[Any]]:
+            kept, kept_signs = [], []
+            for i in range(len(parts)):
+                outside = [j for j in range(n) if part_of[j] != i]
+                if not rows.size:
+                    continue
+                if not outside:                                # one part: every stabilizer is within it
+                    kept.extend(rows)
+                    kept_signs.extend(signs)
+                    continue
+                for c in nullspace(rows[:, outside].T):     # combinations that vanish outside part i
+                    kept.append((c @ rows) % 2)
+                    kept_signs.append(_sum([s for ci, s in zip(c, signs) if ci]))
+            return _min_weight_basis(*_independent(as_matrix(kept, n), kept_signs, n), n)
+
+        sx, sx_signs = within(self.sx, self.sx_signs)
+        sz, sz_signs = within(self.sz, self.sz_signs)
+        code = StabilizerCode(qubits=self.qubits, hadamard=self.hadamard, sx=sx, sx_signs=sx_signs, sz=sz,
+                              sz_signs=sz_signs, logical_x=[], logical_z=[], non_clifford=self.non_clifford,
+                              positions=self.positions, nonclifford_columns=self.nonclifford_columns)
+        stab = code.symplectic()
+        lx, lz = _canonical_logicals(stab, n)
+        code.logical_x = [PauliString.from_arrays(*_lightest(v, stab, n)) for v in lx]
+        code.logical_z = [PauliString.from_arrays(*_lightest(v, stab, n)) for v in lz]
+        return code
+
     # -- parameters -------------------------------------------------------------
 
     @property
@@ -348,6 +404,37 @@ class StabilizerCode:
         index); ``by='position'`` by where they sit on the hardware, which is the
         right comparison across a permutation stage that moves the qubits.
         """
+        matched = self._matched(other, by)
+        if matched is None:
+            return False
+        a, b, columns = matched
+        bs = b.symplectic()
+        bs = bs[:, columns] if bs.size else bs
+        ra, rb = rref(a.symplectic())[0], rref(bs)[0]
+        return ra.shape == rb.shape and bool((ra == rb).all())
+
+    def same_logicals_as(self, other: 'StabilizerCode', by: str = 'label') -> bool | None:
+        """Whether the two codes name the same logical operators: each logical ``X`` and ``Z``
+        of one is that of the other, up to stabilizers (signs ignored).
+
+        ``None`` when they are not the same code (:meth:`same_code_as`, with
+        qubits matched the same way). A block's logical action is named after the
+        logical operators of the code after it; when that is the code before it,
+        this says whether the names agree, so that the action is a gate on that one
+        code. Matching qubits by position can map one logical qubit onto another.
+        """
+        if not self.same_code_as(other, by):
+            return None
+        a, b, columns = self._matched(other, by)
+        if a.k != b.k:
+            return False
+        r, pivots, _ = rref(a.symplectic())
+        return all(in_rowspace((p.symplectic + q.symplectic[columns]) % 2, r, pivots)
+                   for ps, qs in ((a.logical_x, b.logical_x), (a.logical_z, b.logical_z)) for p, q in zip(ps, qs))
+
+    def _matched(self, other: 'StabilizerCode', by: str) -> 'tuple[StabilizerCode, StabilizerCode, list[int]] | None':
+        """Both codes on their data qubits, and the columns of ``other``'s ``(x | z)`` rows in ``self``'s
+        qubit order; ``None`` when the qubits (labels or positions) differ."""
         a, b = self.data(), other.data()
         if by == 'position':
             if a.positions is None or b.positions is None:
@@ -358,16 +445,31 @@ class StabilizerCode:
         else:
             raise ValueError("by must be 'label' or 'position'")
         if set(ka) != set(kb):
-            return False
+            return None
         order = [kb.index(q) for q in ka]
-        bs = b.symplectic()
-        bs = bs[:, order + [b.n + j for j in order]] if bs.size else bs
-        ra, rb = rref(a.symplectic())[0], rref(bs)[0]
-        return ra.shape == rb.shape and bool((ra == rb).all())
+        return a, b, order + [b.n + j for j in order]
+
+    def signs_modulo(self, constraints: Any, latest: bool = False) -> 'StabilizerCode':
+        """The same code with every stabilizer sign rewritten modulo the linear ``constraints`` on the outcomes.
+
+        Each sign is rewritten by :func:`~zxqec.gpf.reduce_modulo`: in the earliest
+        outcomes it can be written in, or with ``latest`` in the latest. With the
+        detectors of the program up to a cut as ``constraints``, the sign of a check
+        that several rounds measured is written in the result of the last of them.
+        The two codes are the same in every run the constraints allow.
+        """
+        from dataclasses import replace
+
+        from ..gpf import reduce_modulo
+        constraints = list(constraints)
+
+        def rewrite(signs: list[Any]) -> list[Any]:
+            return [reduce_modulo(sg, constraints, latest=latest) for sg in signs]
+        return replace(self, sx_signs=rewrite(self.sx_signs), sz_signs=rewrite(self.sz_signs), _distance=None)
 
     # -- the ideal encoder ----------------------------------------------------------
 
-    def encoder(self) -> BaseGraph:
+    def encoder(self, checks: str = 'X', stabilizers: Any = None) -> BaseGraph:
         """The ideal encoder of this code: a ZX-diagram from ``k`` logical inputs to the qubits.
 
         It is the isometry ``E`` with ``E X_i = Xbar_i E`` and ``E Z_i = Zbar_i E``
@@ -375,17 +477,42 @@ class StabilizerCode:
         stabilizer signs of this code (which may be Boolean functions of outcomes).
         Its adjoint is the ideal decoder. Up to a non-zero scalar.
 
-        For a CSS code it is the two-layer diagram below; for any other stabilizer
-        code it is read off its Choi state (:func:`_choi_encoder`).
+        For a CSS code it is the two-layer diagram below: an X-spider on each qubit, a
+        Z-spider for each logical input wired along its logical ``X``, and a Z-spider for
+        each X stabilizer with its sign as its phase; the signs of the Z stabilizers are
+        the phases of the qubits' X-spiders. ``checks='Z'`` gives the same map in the
+        other colours: a Z-spider on each qubit, an X-spider for each logical input wired
+        along its logical ``Z``, and an X-spider for each Z stabilizer with its sign as its
+        phase. ``stabilizers`` builds it on other generators of the same stabilizer group,
+        with their signs (:class:`PauliString`), instead of :attr:`stabilizers`: the same
+        map, with a spider for each of those. For any other stabilizer code it is read off
+        its Choi state (:func:`_choi_encoder`).
         """
+        if checks not in ('X', 'Z'):
+            raise ValueError("checks is 'X' or 'Z', not {!r}".format(checks))
         if not self.is_css:
+            if checks == 'Z' or stabilizers is not None:
+                raise NotImplementedError("encoder(checks='Z' or stabilizers=...): a code that is not CSS")
             return _choi_encoder(self)
-        stabs = self.stabilizers
+        stabs = self.stabilizers if stabilizers is None else list(stabilizers)
         xs = [(p, p.sign) for p in stabs if any(p.x)]
         zs = [(p, p.sign) for p in stabs if any(p.z)]
         n = self.n
+        on_qubit, on_check = VertexType.X, VertexType.Z
+        logical_in, logical_fixed = self.logical_x, self.logical_z
+
+        def part(p: PauliString) -> Any:
+            return p.z
+
+        if checks == 'Z':                               # the same construction with X and Z swapped
+            xs, zs = zs, xs
+            on_qubit, on_check = VertexType.Z, VertexType.X
+            logical_in, logical_fixed = self.logical_z, self.logical_x
+
+            def part(p: PauliString) -> Any:
+                return p.x
         # output X-spider phases t: Z-stabilizer signs are t.z, logical Z acts without sign
-        rows = [np.array(p.z, np.uint8) for p, _ in zs] + [np.array(p.z, np.uint8) for p in self.logical_z]
+        rows = [np.array(part(p), np.uint8) for p, _ in zs] + [np.array(part(p), np.uint8) for p in logical_fixed]
         rhs: list[Any] = [s for _, s in zs] + [0] * self.k
         t = _solve_symbolic(as_matrix(rows, n), rhs, n)
         g = Graph()
@@ -396,21 +523,21 @@ class StabilizerCode:
         outs = []
         xsp = []
         for j in range(n):
-            w = g.add_vertex(VertexType.X, j, 2, t[j])
+            w = g.add_vertex(on_qubit, j, 2, t[j])
             o = g.add_vertex(VertexType.BOUNDARY, j, 3)
             g.add_edge((w, o))
             xsp.append(w)
             outs.append(o)
         ins = []
-        for i, p in enumerate(self.logical_x):
+        for i, p in enumerate(logical_in):
             b = g.add_vertex(VertexType.BOUNDARY, i, 0)
-            z = g.add_vertex(VertexType.Z, i, 1)
+            z = g.add_vertex(on_check, i, 1)
             g.add_edge((b, z))
             ins.append(b)
             for j in p.support:
                 g.add_edge((z, xsp[j]))
         for i, (p, s) in enumerate(xs):
-            z = g.add_vertex(VertexType.Z, self.k + i, 1, s)
+            z = g.add_vertex(on_check, self.k + i, 1, s)
             for j in p.support:
                 g.add_edge((z, xsp[j]))
         g.set_inputs(tuple(ins))
@@ -443,26 +570,614 @@ class StabilizerCode:
     def __str__(self) -> str:
         return self.describe()
 
+    def layout_checks(self, coords: dict[Any, Any]) -> dict[str, list[tuple[Any, ...]]]:
+        """A generating set of the X-type and of the Z-type stabilizers, chosen to be drawn on a layout.
+
+        ``coords`` gives the place ``(x, y)`` of every position (or label, if the code
+        has no positions). The group is listed (:func:`~zxqec.codes.gf2.span`) and its
+        elements taken greedily: fewest qubits first, then the smallest area of their
+        bounding box on the layout, then by their qubits; an element is kept if it is not
+        a product of those kept already. On a surface code these are its faces. Returns
+        ``{'X': [...], 'Z': [...]}``, each check as the tuple of the positions it acts on.
+        Signs are not kept. CSS codes only (``NotImplementedError`` otherwise).
+        """
+        from .gf2 import rank, span
+
+        d = self.data()
+        if not d.is_css:
+            raise NotImplementedError("layout_checks: a code that is not CSS")
+        where = list(d.positions) if d.positions is not None else list(d.qubits)
+        missing = [w for w in where if w not in coords]
+        if missing:
+            raise ValueError("no coordinates for positions {}".format(missing))
+        out: dict[str, list[tuple[Any, ...]]] = {}
+        for kind in ('X', 'Z'):
+            rows = [np.array(p.x if kind == 'X' else p.z, np.uint8) for p in d.stabilizers
+                    if any(p.x if kind == 'X' else p.z)]
+            if not rows:
+                out[kind] = []
+                continue
+            group = [v for v in span(as_matrix(rows, d.n)) if v.any()]
+
+            def key(v: np.ndarray) -> tuple[Any, ...]:
+                pts = [coords[where[j]] for j in np.flatnonzero(v)]
+                xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+                return (int(v.sum()), (max(xs) - min(xs)) * (max(ys) - min(ys)), tuple(np.flatnonzero(v)))
+
+            kept: list[np.ndarray] = []
+            target = rank(as_matrix(rows, d.n))
+            for v in sorted(group, key=key):
+                if rank(as_matrix(kept + [v], d.n)) > len(kept):
+                    kept.append(v)
+                    if len(kept) == target:
+                        break
+            out[kind] = [tuple(where[j] for j in np.flatnonzero(v)) for v in kept]
+        return out
+
+    def draw_layout(self, coords: dict[Any, Any], figsize: tuple[float, float] | None = None,
+                    logicals: bool = True, y_down: bool = True, title: str | None = None) -> Any:
+        """The code drawn on the hardware layout, the way surface codes are usually drawn.
+
+        Each data qubit is a dot at ``coords[position]`` (the code's positions, or its
+        labels if it has none), named by its label, so a code read after a permutation
+        shows where each qubit has moved. Each check of :meth:`layout_checks` is a patch
+        over the qubits it acts on, red for ``X`` and green for ``Z`` (PyZX's colours): a
+        face for three or more qubits, a half-disc on the outer side for two, a ring for
+        one. With ``logicals`` each logical operator is a dashed line through its qubits,
+        named ``X`` or ``Z`` (with its index if the code has several). Signs are not shown.
+        ``y_down`` puts larger ``y`` lower, as rows are numbered. CSS codes only. Returns
+        the figure.
+        """
+        import matplotlib.pyplot as plt
+
+        from ..spacetime.drawing import _VERTEX_COLORS, _finish
+
+        d = self.data()
+        checks = d.layout_checks(coords)
+        where = list(d.positions) if d.positions is not None else list(d.qubits)
+        pts = {w: tuple(float(c) for c in coords[w][:2]) for w in where}
+        fill = {'X': _VERTEX_COLORS[VertexType.X], 'Z': _VERTEX_COLORS[VertexType.Z]}
+        edge = {'X': '#b03030', 'Z': '#2e8b2e'}
+        fig, ax = plt.subplots(figsize=figsize or (3.2, 3.2))
+        _draw_check_faces(ax, checks, pts, {kind: dict(facecolor=fill[kind], edgecolor=edge[kind], alpha=0.75,
+                                                       lw=1, zorder=1) for kind in ('X', 'Z')})
+        if logicals:
+            for kind, ops in (('X', d.logical_x), ('Z', d.logical_z)):
+                for i, op in enumerate(ops):
+                    line = sorted((pts[where[j]] for j in op.support), key=lambda p: (p[0], p[1]))
+                    off = 0.08 if kind == 'X' else -0.08
+                    ax.plot([p[0] + off for p in line], [p[1] + off for p in line], ls='--', lw=1.6,
+                            color=edge[kind], zorder=3)
+                    name = kind + (str(i) if len(ops) > 1 else '')
+                    ax.text(line[-1][0] + off + 0.18, line[-1][1] + off + 0.18, name, color=edge[kind],
+                            fontsize=11, fontweight='bold', ha='center', va='center', zorder=4)
+        for w, q in zip(where, d.qubits):
+            ax.plot(*pts[w], 'o', color='black', ms=5, zorder=5)
+            ax.text(pts[w][0] - 0.12, pts[w][1] - 0.12, str(q), fontsize=9, ha='right', va='bottom', zorder=6)
+        xs, ys = [p[0] for p in pts.values()], [p[1] for p in pts.values()]
+        ax.set_xlim(min(xs) - 0.8, max(xs) + 0.8)
+        ax.set_ylim(min(ys) - 0.8, max(ys) + 0.8)
+        if y_down:
+            ax.invert_yaxis()
+        ax.set_aspect('equal')
+        ax.axis('off')
+        if title:
+            ax.set_title(title, fontsize=10)
+        fig.tight_layout()
+        return _finish(fig)
+
+    def draw_encoder(self, coords: dict[Any, Any], adjoint: bool = False, checks: str = 'auto',
+                     figsize: tuple[float, float] | None = None, y_down: bool = True, spacing: float = 1.6,
+                     label_size: float | None = None, face_colors: dict[str, str] | None = None,
+                     face_alpha: float = 0.35, wire_ends: str = 'dot', title: str | None = None) -> Any:
+        """The ideal encoder (:meth:`encoder`) drawn on the hardware layout, as encoders of surface codes are drawn by hand.
+
+        The ZX-diagram of :meth:`encoder` (of the data qubits, :meth:`data`), each spider at
+        a place on the layout: the spider of each qubit at ``coords[position]``, as in
+        :meth:`draw_layout`, with its output wire a short stub below it; the spider of each
+        check in the middle of the qubits it is wired to, or, for two qubits, on the outer
+        side, where :meth:`draw_layout` puts the half-disc; the spider of each logical input
+        beyond its logical operator, on the side away from the middle of the code (of its
+        block, :meth:`blocks`; beside the line of its qubits if they are on one line), with
+        its input wire pointing further away; of the places a step or more out, the nearest
+        that is half a step clear of every qubit and of the other logical spiders and, on the
+        side the stubs point to, off their lines (moving aside first, then further out).
+        ``checks`` picks which stabilizers get a spider (:meth:`encoder`): ``'X'``, ``'Z'``,
+        or ``'auto'``, the type with more signs that are not ``+`` (``'X'`` on a tie). The
+        encoder is built on the checks of :meth:`layout_checks` (``encoder(stabilizers=...)``),
+        the faces drawn behind it as in :meth:`draw_layout`, so that each check spider sits
+        on its own face (moved a little where that place is taken by a qubit or another
+        spider, as in a symmetric or one-dimensional layout); the sign of each face is worked out from those of
+        :attr:`stabilizers` (the sum of the signs of the generators whose product it is). It
+        is the phase of the face's spider; the signs of the other type are sums on the
+        qubits' spiders. The faces are in ``face_colors`` (``{'X': ..., 'Z': ...}``, by
+        default PyZX's colours) at opacity ``face_alpha``. ``label_size`` sets the font size of the phase labels and puts
+        each beside its spider, as :func:`~zxqec.spacetime.draw_graph` does (without the
+        white box behind it); for a check on the edge, outside it, clear of the stubs. ``adjoint`` draws the ideal decoder, the adjoint diagram, at
+        the same places with the stubs above the qubits. ``wire_ends='tick'`` draws the
+        ends of the wires bare, as by hand, instead of PyZX's dots. PyZX draws the diagram,
+        its spiders a fixed size, so ``spacing`` (the drawn length of one unit of
+        ``coords``) sets how far apart they are. Without ``figsize`` the figure is 0.3 inch
+        per drawn unit, so that pictures drawn with the same ``spacing`` have the same
+        scale; labels beyond the drawing are kept by saving with ``bbox_inches='tight'``. A
+        long sign (a sum of outcomes) beside a qubit's spider can run over the next qubit, and
+        two checks on facing edges of two patches put their half-discs and labels close.
+        ``y_down`` as in :meth:`draw_layout`. CSS codes only. Returns the figure.
+        """
+        d = self.data()
+        if not d.is_css:
+            raise NotImplementedError("draw_encoder: a code that is not CSS")
+        faces, on_faces = _face_generators(d, coords)
+        if checks == 'auto':
+            def signed(kind: str) -> int:
+                return sum(1 for p in on_faces if any(p.x if kind == 'X' else p.z)
+                           and (getattr(p.sign, 'free_vars', lambda: set())() or
+                                (isinstance(p.sign, (int, Fraction)) and p.sign % 2 != 0)))
+            checks = 'Z' if signed('Z') > signed('X') else 'X'
+        g = d.encoder(checks, stabilizers=on_faces)
+        if adjoint:
+            g = g.adjoint()
+        qubit_ends, logical_ends = (g.inputs(), g.outputs()) if adjoint else (g.outputs(), g.inputs())
+        stub = 0.45 if adjoint else -0.45              # the decoder's inputs above the qubits, the encoder's outputs below
+        ends = [[(b, stub)] for b in qubit_ends]
+        return _draw_code_layout(d, coords, faces, g, ends, list(logical_ends), figsize, y_down, spacing, label_size,
+                                 face_colors, face_alpha, wire_ends, title)
+
+    def measurement(self, kind: str, stabilizers: Any = None) -> BaseGraph:
+        """The ideal measurement of all checks of one ``kind`` (``'X'`` or ``'Z'``), with their signs: a ZX-diagram.
+
+        The projector onto the states in which each stabilizer of that kind has its
+        sign (which may be a Boolean function of outcomes), from the qubits to the
+        qubits, up to a non-zero scalar: for X checks an X-spider on each qubit's wire
+        and, for each check, a Z-spider wired to the X-spiders of its qubits with its
+        sign as its phase; for Z checks the same in the other colours (the measurement of
+        a Z parity: a Z-spider on each qubit, joined to an X-spider with the result as its
+        phase). ``stabilizers``, as in :meth:`encoder`, uses other generators of the same
+        group, with their signs. CSS codes only.
+        """
+        if kind not in ('X', 'Z'):
+            raise ValueError("kind is 'X' or 'Z', not {!r}".format(kind))
+        if not self.is_css:
+            raise NotImplementedError("measurement: a code that is not CSS")
+        stabs = self.stabilizers if stabilizers is None else list(stabilizers)
+        checked = [p for p in stabs if any(p.x if kind == 'X' else p.z)]
+        g = Graph()
+        reg = g.var_registry
+        for p in checked:
+            for v in getattr(p.sign, 'free_vars', lambda: set())():
+                reg.set_type(v.name, True)
+        on_qubit, on_check = (VertexType.X, VertexType.Z) if kind == 'X' else (VertexType.Z, VertexType.X)
+        ins, outs, spiders = [], [], []
+        for j in range(self.n):
+            i = g.add_vertex(VertexType.BOUNDARY, j, 0)
+            w = g.add_vertex(on_qubit, j, 1)
+            o = g.add_vertex(VertexType.BOUNDARY, j, 2)
+            g.add_edge((i, w))
+            g.add_edge((w, o))
+            ins.append(i)
+            outs.append(o)
+            spiders.append(w)
+        for p in checked:
+            c = g.add_vertex(on_check, self.n, 1, p.sign)
+            for j in p.support:
+                g.add_edge((c, spiders[j]))
+        g.set_inputs(tuple(ins))
+        g.set_outputs(tuple(outs))
+        g.rebind_variables_to_registry()
+        return g
+
+    def draw_measurement(self, coords: dict[Any, Any], kind: str, results: Any = None,
+                         figsize: tuple[float, float] | None = None, y_down: bool = True, spacing: float = 1.6,
+                         label_size: float | None = None, face_colors: dict[str, str] | None = None,
+                         face_alpha: float = 0.35, wire_ends: str = 'dot', title: str | None = None) -> Any:
+        """The ideal measurement of the checks of one ``kind`` (``'X'`` or ``'Z'``) drawn on the hardware layout.
+
+        The diagram of :meth:`measurement` (a round of checks of one kind, as it is drawn
+        by hand): the spider of each qubit at ``coords[position]``, with its input wire a
+        short stub above it and its output wire a short stub below; a spider for each check
+        of that kind of :meth:`layout_checks`, placed and labelled as by
+        :meth:`draw_encoder`, with the check's sign as its phase (worked out as there).
+        There is no logical wire: on the code space the measurement is the identity.
+        ``results`` (``{name: operator}``, as :meth:`~zxqec.qprogram.QProgram.measured_operators`
+        gives for the stage that measures the checks) puts on each check the result that
+        measures it: its phase is that result (plus the operator's sign), so the picture
+        shows what the stage reads, also where the result is always the same. Without it, or
+        for a check no result measures, the phase is the check's sign. The signs of the code after a round of
+        checks, in that round's results (``QProgram.code_at(..., outcomes='latest')``),
+        show the round as it measured them. The faces of both kinds are drawn behind, and
+        the other arguments are those of :meth:`draw_encoder`. CSS codes only. Returns the
+        figure.
+        """
+        if kind not in ('X', 'Z'):
+            raise ValueError("kind is 'X' or 'Z', not {!r}".format(kind))
+        d = self.data()
+        if not d.is_css:
+            raise NotImplementedError("draw_measurement: a code that is not CSS")
+        faces, on_faces = _face_generators(d, coords)
+        if results:
+            on_faces = [_read_by(d, p, kind, results) for p in on_faces]
+        g = d.measurement(kind, stabilizers=on_faces)
+        ins, outs = g.inputs(), g.outputs()
+        ends = [[(i, 0.45), (o, -0.45)] for i, o in zip(ins, outs)]   # input above, output below
+        return _draw_code_layout(d, coords, faces, g, ends, [], figsize, y_down, spacing, label_size,
+                                 face_colors, face_alpha, wire_ends, title)
+
+
+def _read_by(d: 'StabilizerCode', p: Any, kind: str, results: Any) -> Any:
+    """The check ``p`` of the code ``d``, with the result that measures it as its sign, if one of ``results`` does.
+
+    ``results`` maps names to operators on the program's qubits (``None`` for a result
+    with no fixed operator); a result measures ``p`` if its operator is ``kind`` on
+    exactly the qubits (labels) of ``p``. Its sign is then the result plus the
+    operator's sign; otherwise ``p`` is returned unchanged.
+    """
+    from pyzx.symbolic import new_var
+
+    if not any(p.x if kind == 'X' else p.z):
+        return p
+    labels = {d.qubits[j] for j in p.support}
+    for name, op in results.items():
+        if op is None:
+            continue
+        letters = op.x if kind == 'X' else op.z
+        other = op.z if kind == 'X' else op.x
+        if set(op.support) == labels and all(letters[q] for q in labels) and not any(other):
+            sign = new_var(name, True)
+            return PauliString(p.x, p.z, sign + 1 if op.sign else sign)
+    return p
+
+
+def _face_generators(d: 'StabilizerCode', coords: dict[Any, Any]) -> tuple[dict[str, list[tuple[Any, ...]]], list[Any]]:
+    """The checks of :meth:`StabilizerCode.layout_checks` of the CSS code ``d``, and the same checks as generators with
+    their signs: each face's sign is the sum of the signs of the stored generators whose product it is."""
+    faces = d.layout_checks(coords)
+    where = list(d.positions) if d.positions is not None else list(d.qubits)
+    index = {w: j for j, w in enumerate(where)}
+    on_faces = []
+    for kind in ('X', 'Z'):
+        gens = [p for p in d.stabilizers if any(p.x if kind == 'X' else p.z)]
+        rows = as_matrix([np.array(p.x if kind == 'X' else p.z, np.uint8) for p in gens], d.n)
+        for face in faces[kind]:
+            v = np.zeros(d.n, np.uint8)
+            v[[index[w] for w in face]] = 1
+            combo = solve(rows.T, v)                    # the face as a product of the stored generators
+            if combo is None:
+                raise ValueError("the check on {} is not a stabilizer of the code".format(face))
+            sign = _sum(p.sign for p, bit in zip(gens, combo) if bit)
+            zero = np.zeros(d.n, np.uint8)
+            on_faces.append(PauliString.from_arrays(v, zero, sign) if kind == 'X'
+                            else PauliString.from_arrays(zero, v, sign))
+    return faces, on_faces
+
+
+def _draw_code_layout(d: 'StabilizerCode', coords: dict[Any, Any], faces: dict[str, list[tuple[Any, ...]]],
+                      g: BaseGraph, ends: list[list[tuple[Any, float]]], logical_ends: list[Any],
+                      figsize: tuple[float, float] | None, y_down: bool, spacing: float, label_size: float | None,
+                      face_colors: dict[str, str] | None, face_alpha: float, wire_ends: str, title: str | None) -> Any:
+    """Draw ``g``, a diagram on the qubits of the code ``d``, on the layout ``coords``.
+
+    ``ends[j]`` lists the wire ends of qubit ``j`` (in the order of the code's positions)
+    with the drawn offset of each stub (positive: above); the spider next to them is the
+    qubit's. ``logical_ends`` are the wire ends of the logical spiders, and every other
+    spider is a check. The placement, labels, faces and window are those described in
+    :meth:`StabilizerCode.draw_encoder`.
+    """
+    from pyzx.drawing import draw_matplotlib
+    from pyzx.utils import get_mode, settings
+
+    from ..spacetime.drawing import _VERTEX_COLORS, _finish, _fit_layout, _set_labels, _set_wire_ends
+
+    where = list(d.positions) if d.positions is not None else list(d.qubits)
+    flip = -spacing if y_down else spacing          # places are in the plot's (x, y): PyZX draws at (row, -qubit)
+    pts = {w: (spacing * float(coords[w][0]), flip * float(coords[w][1])) for w in where}
+    middle: dict[Any, tuple[float, float]] = {}     # the middle of each position's block
+    for b in d.blocks():
+        ps = [pts[where[d.qubits.index(q)]] for q in b.qubits]
+        for q in b.qubits:
+            middle[where[d.qubits.index(q)]] = (sum(p[0] for p in ps) / len(ps), sum(p[1] for p in ps) / len(ps))
+    place: dict[Any, tuple[float, float]] = {}
+    centre: dict[Any, tuple[float, float]] = {}
+    for w, wire in zip(where, ends):
+        (v,) = list(g.neighbors(wire[0][0]))
+        place[v], centre[v] = pts[w], middle[w]
+        for b, dy in wire:
+            place[b] = (pts[w][0], pts[w][1] + dy)
+    stubs = sorted({1 if dy > 0 else -1 for wire in ends for _b, dy in wire})   # the directions the stubs point to
+    placed: list[tuple[float, float]] = []          # the logical spiders placed so far
+    for b in logical_ends:
+        (z,) = list(g.neighbors(b))
+        qs = [v for v in g.neighbors(z) if v != b]
+        mx, my = sum(place[v][0] for v in qs) / len(qs), sum(place[v][1] for v in qs) / len(qs)
+        cx, cy = centre[qs[0]]
+        ux, uy = _away(mx - cx, my - cy)
+        lx, ly = max(((place[v][0] - mx, place[v][1] - my) for v in qs), key=lambda t: t[0] ** 2 + t[1] ** 2)
+        norm = (lx * lx + ly * ly) ** 0.5
+        if norm > 1e-9 and all(abs((place[v][0] - mx) * ly - (place[v][1] - my) * lx) / norm < 0.2 * spacing
+                               for v in qs):   # its qubits on one line (within a fifth of a step): beside it
+            nx, ny = _away(-ly, lx)
+            if nx * (mx - cx) + ny * (my - cy) < 0:
+                nx, ny = -nx, -ny
+            ux, uy = nx, ny
+        block = [p for w, p in pts.items() if middle[w] == (cx, cy)]
+        reach = max((p[0] - mx) * ux + (p[1] - my) * uy for p in block) + spacing   # beyond the block
+        ax_, ay_ = -uy, ux                          # along the block's side, pointing right (or up)
+        if ax_ < -1e-9 or (abs(ax_) <= 1e-9 and ay_ < 0):
+            ax_, ay_ = -ax_, -ay_
+        on_stubs = any(uy * sg > 0.7 for sg in stubs)   # beyond the qubits on the side their stubs point to
+
+        def clear(x: float, y: float, wires: bool) -> bool:
+            """Half a step from every qubit and logical spider, off the line of its qubits' stubs, and (with
+            ``wires``) with no wire to its qubits passing over another qubit's spider."""
+            others = list(pts.values()) + placed
+            if any((x - p[0]) ** 2 + (y - p[1]) ** 2 < (0.5 * spacing) ** 2 for p in others):
+                return False
+            if on_stubs and any(abs(x - place[v][0]) < 0.25 * spacing for v in qs):
+                return False
+            return not wires or not any(_near_segment(p, (x, y), place[v], 0.15 * spacing)
+                                        for v in qs for p in others if p != place[v])
+
+        spot = None
+        for wires in (True, False):                 # the nearest clear place: aside first, then further out
+            for out in (0.0, 0.5, 1.0, 1.5, 2.0):
+                for side in (0.0, -0.5, 0.5, -1.0, 1.0, -1.5, 1.5):
+                    x = mx + (reach + out * spacing) * ux + side * spacing * ax_
+                    y = my + (reach + out * spacing) * uy + side * spacing * ay_
+                    if clear(x, y, wires):
+                        spot = (x, y)
+                        break
+                if spot is not None:
+                    break
+            if spot is not None:
+                break
+        place[z] = spot if spot is not None else (mx + reach * ux, my + reach * uy)
+        placed.append(place[z])
+        place[b] = (place[z][0] + 0.45 * ux, place[z][1] + 0.45 * uy)
+    outward: dict[tuple[float, float], tuple[float, float]] = {}   # checks on the edge: where their label goes
+    checks_placed: list[tuple[float, float]] = []
+    for v in g.vertices():
+        if v not in place:                          # the spider of a check
+            qs = list(g.neighbors(v))
+            base = _check_place([place[w] for w in qs], *centre[qs[0]], 0.25 * spacing)
+
+            def free(x: float, y: float) -> bool:
+                """Half a step from every qubit and spider placed so far, and not beyond one of its qubits
+                on the side of that qubit's stub, where its wire would run along the stub."""
+                if any((x - p[0]) ** 2 + (y - p[1]) ** 2 < (0.5 * spacing) ** 2
+                       for p in list(pts.values()) + placed + checks_placed):
+                    return False
+                return not any(abs(x - place[w][0]) < 0.25 * spacing and (y - place[w][1]) * sg > 0
+                               for w in qs for sg in stubs)
+
+            place[v] = base
+            if not free(*base):                     # (a symmetric or collinear layout) the nearest free place
+                for dx, dy in ((0.3, 0), (-0.3, 0), (0, 0.3), (0, -0.3), (0.3, 0.3), (-0.3, 0.3), (0.3, -0.3),
+                               (-0.3, -0.3), (0.5, 0), (-0.5, 0), (0, 0.5), (0, -0.5)):
+                    if free(base[0] + dx * spacing, base[1] + dy * spacing):
+                        place[v] = (base[0] + dx * spacing, base[1] + dy * spacing)
+                        break
+            checks_placed.append(place[v])
+            if len(qs) <= 2:
+                mx = sum(place[w][0] for w in qs) / len(qs)
+                my = sum(place[w][1] for w in qs) / len(qs)
+                outward[(round(place[v][0], 6), round(place[v][1], 6))] = _away(place[v][0] - mx, place[v][1] - my)
+    for v, (x, y) in place.items():
+        g.set_row(v, x)
+        g.set_qubit(v, -y)
+    mode = get_mode()
+    settings.mode = "notebook"                      # PyZX would call plt.show() itself otherwise
+    try:                                            # (no Hadamard edges here: 'box' keeps PyZX from bending the stubs)
+        fig = draw_matplotlib(g, figsize=figsize or (3.2, 3.2), h_edge_draw='box', show_time=False)
+    finally:
+        settings.mode = mode
+    ax = fig.axes[0]
+    colors = face_colors or {'X': _VERTEX_COLORS[VertexType.X], 'Z': _VERTEX_COLORS[VertexType.Z]}
+    _draw_check_faces(ax, faces, pts, {kind: dict(facecolor=colors[kind], edgecolor='white', alpha=face_alpha,
+                                                  lw=1.5, zorder=-1) for kind in ('X', 'Z')},
+                      middle=lambda check: middle[check[0]])
+    if label_size is not None:
+        _set_labels(ax, label_size, 'right')
+        for t in ax.texts:
+            t.set_bbox(None)                        # its white box would hide the wire ends next to it
+            x, y = t.get_position()                 # (_set_labels put it 0.28 right of its spider)
+            key = (round(x - 0.28, 6), round(y, 6))
+            if key in outward:                      # a check on the edge: its label outside, clear of the stubs
+                ux, uy = outward[key]
+                t.set_position((key[0] + 0.42 * ux, key[1] + 0.42 * uy))
+                if abs(uy) >= abs(ux):
+                    t.set_horizontalalignment('center')
+                    t.set_verticalalignment('bottom' if uy > 0 else 'top')
+                else:
+                    t.set_horizontalalignment('left' if ux > 0 else 'right')
+                    t.set_verticalalignment('center')
+    _set_wire_ends(ax, wire_ends)
+    _fit_layout(fig, ax, list(place.values()), list(pts.values()), 0.55 * spacing, figsize is None, title)
+    return _finish(fig)
+
+
+def _draw_check_faces(ax: Any, checks: dict[str, list[tuple[Any, ...]]], pts: dict[Any, tuple[float, float]],
+                      style: dict[str, dict[str, Any]], middle: Any = None) -> None:
+    """Each check of ``checks`` (as :meth:`StabilizerCode.layout_checks` gives them) as a patch over its qubits.
+
+    ``pts`` gives each position's place; ``style[kind]`` the keyword arguments of the
+    patches of the ``'X'`` and the ``'Z'`` checks. A face for three or more qubits, a
+    half-disc on the outer side for two, a ring for one. The outer side is away from
+    ``middle(check)``, by default the middle of all the places.
+    """
+    from matplotlib.patches import Circle, Polygon, Wedge
+
+    cx = sum(p[0] for p in pts.values()) / len(pts)
+    cy = sum(p[1] for p in pts.values()) / len(pts)
+    for kind in ('X', 'Z'):
+        for check in checks[kind]:
+            ps = [pts[w] for w in check]
+            if len(ps) == 1:
+                ax.add_patch(Circle(ps[0], 0.3, **style[kind]))
+            elif len(ps) == 2:
+                if middle is not None:
+                    cx, cy = middle(check)
+                (x1, y1), (x2, y2) = ps
+                mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+                r = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5 / 2
+                base = np.degrees(np.arctan2(y2 - y1, x2 - x1))
+                out = np.degrees(np.arctan2(my - cy, mx - cx))
+                start = base if np.cos(np.radians(out - base - 90)) > 0 else base + 180
+                ax.add_patch(Wedge((mx, my), r, start, start + 180, **style[kind]))
+            else:
+                mx, my = sum(p[0] for p in ps) / len(ps), sum(p[1] for p in ps) / len(ps)
+                ps = sorted(ps, key=lambda p: np.arctan2(p[1] - my, p[0] - mx))
+                ax.add_patch(Polygon(ps, closed=True, **style[kind]))
+
+
+def _near_segment(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float], r: float) -> bool:
+    """Whether ``p`` is within ``r`` of the segment from ``a`` to ``b``, away from its ends."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length2 = dx * dx + dy * dy
+    if length2 < 1e-12:
+        return False
+    t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2
+    return 0.02 < t < 0.98 and abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length2 ** 0.5 < r
+
+
+def _away(dx: float, dy: float) -> tuple[float, float]:
+    """The unit vector along ``(dx, dy)``; to the left if that is (almost) zero."""
+    norm = (dx * dx + dy * dy) ** 0.5
+    return (dx / norm, dy / norm) if norm > 1e-9 else (-1.0, 0.0)
+
+
+def _check_place(ps: list[tuple[float, float]], cx: float, cy: float, reach: float) -> tuple[float, float]:
+    """Where :meth:`StabilizerCode.draw_encoder` puts the spider of a check on the qubits at ``ps``.
+
+    The middle of the qubits; for two, out on the side away from ``(cx, cy)`` (the middle
+    of the code), where the half-disc of :func:`_draw_check_faces` bulges; for one,
+    ``reach`` away from its qubit, away from the middle of the code.
+    """
+    mx, my = sum(p[0] for p in ps) / len(ps), sum(p[1] for p in ps) / len(ps)
+    if len(ps) >= 3:
+        return (mx, my)
+    if len(ps) == 2:
+        (x1, y1), (x2, y2) = ps
+        r = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5 / 2
+        nx, ny = -(y2 - y1) / (2 * r), (x2 - x1) / (2 * r)
+        if nx * (mx - cx) + ny * (my - cy) < 0:
+            nx, ny = -nx, -ny
+        return (mx + 0.8 * r * nx, my + 0.8 * r * ny)
+    ux, uy = _away(mx - cx, my - cy)
+    return (mx + reach * ux, my + reach * uy)
+
 
 # -- reading a code off a diagram ---------------------------------------------------
 
-def code_of(g: BaseGraph, labels: Any = None, positions: Any = None,
-            common_to_all_runs: bool = False) -> StabilizerCode:
-    """The stabilizer code that ``g`` encodes into (question 1 of the paper).
+# -- the two layers, as code_of reads them ---------------------------------------------------
 
-    ``g`` maps its inputs (logical qubits) to its outputs (physical qubits);
-    ``labels[j]`` names output ``j`` (default: its index). Symbolic Boolean phases
-    (measurement outcomes) are allowed and become stabilizer signs. The code
-    need not be CSS. Raises :class:`NotACodeError` if ``g`` is zero or not an
-    isometry, :class:`OutcomeDependentCodeError` if the stabilizers themselves
-    (not only their signs) depend on the outcomes, and ``NotImplementedError``
-    for phase gadgets that the reduction leaves in the X basis.
+@dataclass
+class CodeLayers:
+    """The reduced diagram of an isometry as :func:`code_of` reads it, before any choice of basis.
 
-    With ``common_to_all_runs`` the stabilizers that depend on the outcomes are
-    left out instead of raising, so the result holds the Pauli strings that
-    are stabilizers (up to sign) in every run; its logical operators and ``k``
-    are then those of that smaller group. Used to check that a block stays in
-    a code (:meth:`~zxqec.codes.LogicalAction.stays_in_code`).
+    Each Z-spider of the reduced diagram that is not a gadget hub gives a row, with
+    one column per output: 1 where the spider is wired to that output's X-spider.
+    The rows of the Z-spiders on inputs form the matrix ``L`` (:attr:`input_rows`),
+    the rows of the others the matrix ``M`` (:attr:`check_rows`), each in the order
+    in which :meth:`draw` shows the spiders, top to bottom. Without phase
+    gadgets, each row of ``M`` is an X stabilizer with the spider's phase as its
+    sign, and the Z stabilizers are the Z strings that meet every row of ``L`` and
+    ``M`` an even number of times (:meth:`z_rows`), each with the sum of the phases
+    of the output X-spiders it touches as its sign (Kissinger, *Phase-free ZX
+    diagrams are CSS codes*). :func:`code_of` takes these and chooses the
+    generators and logical operators it prints.
+    """
+    gpf: GPFResult                  #: the reduced diagram
+    labels: tuple[Any, ...]         #: the label of each output, i.e. of each column
+    input_spiders: list[Any]        #: the Z-spider of each row of ``L``
+    check_spiders: list[Any]        #: the Z-spider of each row of ``M``
+    output_spiders: list[Any]       #: the X-spider of each output (column)
+    hubs: list[Any]                 #: the hubs of the phase gadgets
+    input_rows: np.ndarray          #: ``L``
+    check_rows: np.ndarray          #: ``M``
+
+    @property
+    def check_phases(self) -> list[Any]:
+        """The phase of each check spider (in units of pi): the sign of its X stabilizer."""
+        return [self.gpf.graph.phase(v) for v in self.check_spiders]
+
+    @property
+    def output_phases(self) -> list[Any]:
+        """The phase of each output's X-spider (in units of pi), the signs of the Z stabilizers."""
+        return [self.gpf.graph.phase(v) for v in self.output_spiders]
+
+    @property
+    def names(self) -> dict[Any, str]:
+        """``in i`` for the Z-spider on input ``i``, ``c1, c2, ...`` for the rows of ``M``,
+        ``out q`` for the X-spider of the output labelled ``q``, ``h1, h2, ...`` for gadget hubs."""
+        h = self.gpf.graph
+        name = {next(iter(h.neighbors(b))): 'in {}'.format(i) for i, b in enumerate(h.inputs())}
+        name.update({v: 'c{}'.format(i + 1) for i, v in enumerate(self.check_spiders)})
+        name.update({v: 'out {}'.format(q) for v, q in zip(self.output_spiders, self.labels)})
+        name.update({v: 'h{}'.format(i + 1) for i, v in enumerate(self.hubs)})
+        return name
+
+    def z_rows(self) -> np.ndarray:
+        """A basis (as rows) of the Z strings that meet every row of ``L`` and ``M`` an even
+        number of times: the null space of ``L`` stacked on ``M`` over GF(2)."""
+        n = len(self.labels)
+        return nullspace(as_matrix(list(self.input_rows) + list(self.check_rows), n))
+
+    def describe(self) -> str:
+        """The matrices ``L`` and ``M`` as a table, with the phases."""
+        names = self.names
+        w = max([len(str(q)) for q in self.labels] + [1])
+        tag = max([len(names[v]) for v in self.input_spiders + self.check_spiders] + [1])
+        lines = ["{} input(s), {} check spider(s), {} output(s), {} phase gadget(s)".format(
+            len(self.input_spiders), len(self.check_spiders), len(self.labels), len(self.hubs)),
+            "rows: Z-spiders; columns: outputs; 1 = wired to that output's X-spider",
+            "     {}   {}  phase".format(' ' * tag, ' '.join(str(q).rjust(w) for q in self.labels))]
+        for mark, spiders, rows in (('L', self.input_spiders, self.input_rows),
+                                    ('M', self.check_spiders, self.check_rows)):
+            for i, (v, row) in enumerate(zip(spiders, rows)):
+                lines.append("  {}  {}   {}  {}".format(mark if i == 0 else ' ', names[v].ljust(tag),
+                                                       ' '.join(str(int(b)).rjust(w) for b in row),
+                                                       self.gpf.graph.phase(v)))
+        lines.append("phases of the output X-spiders: {}".format(' '.join(str(p) for p in self.output_phases)))
+        return '\n'.join(lines)
+
+    def __str__(self) -> str:
+        return self.describe()
+
+    def draw(self, figsize: tuple[float, float] | None = None, **kwargs: Any) -> Any:
+        """PyZX's drawing of the reduced diagram as :func:`~zxqec.gpf.layout_gpf` lays it out, each
+        Z-spider named as in :meth:`describe` and each output by its label. Keyword arguments go to
+        ``draw_matplotlib``. Returns the figure."""
+        from pyzx.drawing import draw_matplotlib
+        from pyzx.utils import get_mode, settings
+
+        from ..spacetime.drawing import _finish
+
+        h = self.gpf.graph
+        lines = max([h.qubit(v) for v in h.vertices()] + [0]) + 1
+        mode = get_mode()
+        settings.mode = "notebook"                # PyZX would call plt.show() itself otherwise
+        try:
+            fig = draw_matplotlib(self.gpf.to_graph(), figsize=figsize or (3.5, 0.5 * lines + 0.6), **kwargs)
+        finally:
+            settings.mode = mode
+        ax = fig.axes[0]
+        names = self.names
+        # beside the spiders, where PyZX writes nothing (it writes phases below them): a spider on an input
+        # is named left of the input's wire end, a check spider left of itself
+        inputs = set(h.inputs())
+        for v in self.input_spiders + self.check_spiders:
+            end = next((b for b in h.neighbors(v) if b in inputs), v)
+            ax.text(h.row(end) - 0.25, -h.qubit(end), names[v], ha='right', va='center', fontsize=9)
+        for b, q in zip(h.outputs(), self.labels):
+            ax.text(h.row(b) + 0.25, -h.qubit(b), str(q), ha='left', va='center', fontsize=9)
+        return _finish(fig)
+
+
+def code_layers(g: BaseGraph, labels: Any = None) -> CodeLayers:
+    """The two layers of ``g``'s reduced diagram, as :func:`code_of` reads them (:class:`CodeLayers`).
+
+    ``labels`` name the outputs as in :func:`code_of`. Raises :class:`NotACodeError`
+    if ``g`` is zero or not an isometry, and ``NotImplementedError`` for phase
+    gadgets in the X basis.
     """
     res = reduce_gpf(g)
     if res.is_zero:
@@ -479,13 +1194,9 @@ def code_of(g: BaseGraph, labels: Any = None, positions: Any = None,
         out_col[w] = j
     in_spiders = {next(iter(h.neighbors(b))) for b in h.inputs()}
 
-    rows_l: list[np.ndarray] = []
-    rows_m: list[np.ndarray] = []
-    signs_m: list[Any] = []
-    zlayer: list[Any] = []          # Z-spiders of the layer, L rows first then M rows
     zl: list[tuple[Any, np.ndarray]] = []
     zm: list[tuple[Any, np.ndarray]] = []
-    gadget_hubs = []
+    hubs = []
     for v in sorted(h.vertices()):
         ty = h.type(v)
         if ty == VertexType.BOUNDARY or is_leaf(h, v):
@@ -494,7 +1205,7 @@ def code_of(g: BaseGraph, labels: Any = None, positions: Any = None,
             if ty == VertexType.Z:
                 raise NotImplementedError("code_of: a non-Clifford phase in the X basis "
                                           "(an X-leaf gadget) is not supported yet")
-            gadget_hubs.append(v)
+            hubs.append(v)
             continue
         if ty == VertexType.X:
             if v not in out_col:
@@ -506,21 +1217,106 @@ def code_of(g: BaseGraph, labels: Any = None, positions: Any = None,
             if w in out_col:
                 row[out_col[w]] = 1
         (zl if v in in_spiders else zm).append((v, row))
-    for v, row in zl:
-        rows_l.append(row)
-        zlayer.append(v)
-    for v, row in zm:
-        rows_m.append(row)
-        signs_m.append(h.phase(v))
-        zlayer.append(v)
+    # rows in the order layout_gpf draws their spiders, top to bottom (what code_of reads does not depend on it)
+    zl.sort(key=lambda vr: (h.qubit(vr[0]), vr[0]))
+    zm.sort(key=lambda vr: (h.qubit(vr[0]), vr[0]))
+    return CodeLayers(gpf=res, labels=labels, input_spiders=[v for v, _ in zl], check_spiders=[v for v, _ in zm],
+                      output_spiders=sorted(out_col, key=lambda w: out_col[w]), hubs=hubs,
+                      input_rows=as_matrix([r for _, r in zl], n), check_rows=as_matrix([r for _, r in zm], n))
+
+
+def stabilizes(g: BaseGraph, pauli: 'PauliString | str') -> bool:
+    """Whether the Pauli string ``pauli`` on the outputs of ``g`` leaves ``g`` unchanged.
+
+    Letter ``j`` acts on output ``j``, and the sign counts: ``-XX`` stabilizes a
+    map that ``XX`` negates. Compared as tensors with their scalars
+    (:func:`~zxqec.gpf.same_map`), so only for small diagrams. A check of
+    :func:`code_of` from outside: :func:`code_of` reads the stabilizers off the
+    reduced diagram, this applies them to ``g`` itself.
+    """
+    from ..gpf import same_map
+    from .pauli import _constant
+
+    p = PauliString.from_str(pauli) if isinstance(pauli, str) else pauli
+    outs = list(g.outputs())
+    if p.n != len(outs):
+        raise ValueError("a {}-qubit string for a diagram with {} outputs".format(p.n, len(outs)))
+    if hasattr(p.sign, 'free_vars') and p.sign.free_vars():
+        raise ValueError("the sign {} depends on measurement outcomes".format(p.sign))
+    after = g.copy()                                   # a copy numbers its vertices anew: use its own outputs
+    for b, x, z in zip(after.outputs(), p.x, p.z):
+        if not (x or z):
+            continue
+        (w,) = list(after.neighbors(b))
+        e = after.edge(w, b)
+        et = after.edge_type(e)
+        after.remove_edge(e)
+        last, row = w, after.row(b)
+        # Y = i X Z: first Z, then X, and a scalar i
+        for ty, on in ((VertexType.Z, z), (VertexType.X, x)):
+            if on:
+                v = after.add_vertex(ty, qubit=after.qubit(b), row=row, phase=1)
+                after.add_edge((last, v), et if last == w else EdgeType.SIMPLE)
+                last = v
+        after.add_edge((last, b), EdgeType.SIMPLE)
+        if x and z:
+            after.scalar.add_phase(Fraction(1, 2))
+    sign = p.sign if isinstance(p.sign, int) else _constant(p.sign)
+    if sign % 2:
+        after.scalar.add_phase(1)
+    return same_map(g, after, preserve_scalar=True)
+
+
+def code_of(g: BaseGraph, labels: Any = None, positions: Any = None,
+            common_to_all_runs: bool = False, generators: str = 'lightest') -> StabilizerCode:
+    """The stabilizer code that ``g`` encodes into (question 1 of the paper).
+
+    ``g`` maps its inputs (logical qubits) to its outputs (physical qubits);
+    ``labels[j]`` names output ``j`` (default: its index). Symbolic Boolean phases
+    (measurement outcomes) are allowed and become stabilizer signs. The code
+    need not be CSS. Raises :class:`NotACodeError` if ``g`` is zero or not an
+    isometry, :class:`OutcomeDependentCodeError` if the stabilizers themselves
+    (not only their signs) depend on the outcomes, and ``NotImplementedError``
+    for phase gadgets that the reduction leaves in the X basis.
+
+    With ``common_to_all_runs`` the stabilizers that depend on the outcomes are
+    left out instead of raising, so the result holds the Pauli strings that
+    are stabilizers (up to sign) in every run; its logical operators and ``k``
+    are then those of that smaller group. Used to check that a block stays in
+    a code (:meth:`~zxqec.codes.LogicalAction.stays_in_code`).
+
+    ``generators`` chooses which generators of the stabilizer group are kept; the
+    group, ``k``, the logical operators and the distance do not depend on it.
+    ``'lightest'`` (default): the lightest elements of the group, then those with
+    the fewest outcomes in their signs, then by support, found by listing the
+    group (up to ``2^16`` elements; a larger group keeps the echelon basis).
+    ``'echelon'``: the group's reduced row echelon basis in the order of the
+    outputs, by Gaussian elimination only. For a code that is not CSS this is
+    the echelon form of the X parts, each with its Z part reduced modulo the
+    Z-type stabilizers, in the frame the code is read in (``hadamard``), so the
+    printed strings need not look like an echelon form.
+    """
+    if generators not in ('lightest', 'echelon'):
+        raise ValueError("generators must be 'lightest' or 'echelon', not {!r}".format(generators))
+    cap = 16 if generators == 'lightest' else 0      # a group above the cap keeps its echelon basis
+    layers = code_layers(g, labels)
+    h = layers.gpf.graph
+    outs = list(h.outputs())
+    labels = layers.labels
+    n = len(labels)
+    zl = list(zip(layers.input_spiders, layers.input_rows))
+    zm = list(zip(layers.check_spiders, layers.check_rows))
+    rows_m = list(layers.check_rows)
+    signs_m = layers.check_phases
+    zlayer = layers.input_spiders + layers.check_spiders     # Z-spiders of the layer, L rows first then M rows
+    gadget_hubs = layers.hubs
     m = len(rows_m)
-    t = [h.phase(w) for w in sorted(out_col, key=lambda w: out_col[w])]
+    t = layers.output_phases
     hflags = tuple(int(has_boundary_hadamard(h, b)) for b in outs)
 
-    all_rows = as_matrix(rows_l + rows_m, n)
-    zstab = nullspace(all_rows)
+    zstab = layers.z_rows()
     sz_signs = [_sum([ti for ti, zi in zip(t, z) if zi]) for z in zstab]
-    sz, sz_signs = _min_weight_basis(*_independent(zstab, sz_signs, n), n)
+    sz, sz_signs = _min_weight_basis(*_independent(zstab, sz_signs, n), n, cap)
 
     # which X-strings of the internal rows survive the phase gadgets (see .phasepoly), and the
     # Z part a Clifford gadget gives them
@@ -537,10 +1333,10 @@ def code_of(g: BaseGraph, labels: Any = None, positions: Any = None,
         if more_z:
             zt = [(row, sg) for row, sg in zip(sz, sz_signs)] + more_z
             sz, sz_signs = _min_weight_basis(*_independent(as_matrix([r for r, _ in zt], n),
-                                                           [sg for _, sg in zt], n), n)
-        sx, sxz, sx_signs = _min_weight_basis_mixed(sx, sxz, sx_signs, n, sz, sz_signs)
+                                                           [sg for _, sg in zt], n), n, cap)
+        sx, sxz, sx_signs = _min_weight_basis_mixed(sx, sxz, sx_signs, n, sz, sz_signs, cap)
     else:
-        sx, sx_signs = _min_weight_basis(*_independent(sx_rows, sx_signs, n), n)
+        sx, sx_signs = _min_weight_basis(*_independent(sx_rows, sx_signs, n), n, cap)
         sxz = None
 
     code = StabilizerCode(qubits=labels, hadamard=hflags, sx=sx, sx_signs=sx_signs, sz=sz,
@@ -609,7 +1405,9 @@ def _gadget_layer(h: BaseGraph, zl: list, zm: list, zlayer: list, hubs: list, la
         leaves = [w for w in h.neighbors(hub) if is_leaf(h, w)]
         angle = sum((h.phase(w) for w in leaves), Fraction(0))
         if hasattr(angle, 'free_vars'):
-            raise NotImplementedError("code_of: a gadget with a symbolic angle")
+            if angle.free_vars():
+                raise NotImplementedError("code_of: a gadget with a symbolic angle")
+            angle = sum((Fraction(c) for c, t in angle.terms if not t.vars), Fraction(0))   # a constant
         sign_vars, const = affine_parts(h.phase(hub))
         bits = [('z', index[w]) for w in h.neighbors(hub) if w in index]
         gadgets.append(Gadget(Fraction(angle), bits, sign_vars, const))

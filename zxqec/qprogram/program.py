@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pyzx.circuit import Circuit
-from pyzx.circuit.gates import HAD, Gate, Reset
+from pyzx.circuit.gates import HAD, ConditionalGate, Gate, Reset
 from pyzx.circuit.graphparser import circuit_to_graph
 from pyzx.graph import Graph
 from pyzx.graph.base import BaseGraph
@@ -59,6 +59,7 @@ from ..spacetime.subdiagram import (
     set_logical_qubit, set_stage, shift_timesteps,
 )
 from ..spacetime.topology import Topology
+from .feedforward import _ConditionalRotation, _gadget_form
 from .levels import Block, LevelManager
 from .rewrites import ReducedBlock, ReducedLevel, check_rewrite, reduce_block, reduce_level
 
@@ -163,13 +164,18 @@ class QProgram:
             gives a pure dependency layering.
         initial_states: ``{k: '0' | '+'}`` states to prepare on inputs before the
             first stage; other inputs stay open.
+        prepare_when_used: prepare each of the ``initial_states`` in the first
+            stage that uses its qubit instead of before the first stage, so a
+            qubit used late has no wire until then (not an identity wire through
+            the stages before). The map is the same.
     """
 
     def __init__(self, qubits: int, *, bits: int = 0,
                  topology: Topology | None = None,
                  mapping: Mapping[int, int] | None = None,
                  gate_durations: Mapping[Any, int] | None = None,
-                 initial_states: Mapping[int, str] | None = None) -> None:
+                 initial_states: Mapping[int, str] | None = None,
+                 prepare_when_used: bool = False) -> None:
         if qubits < 1:
             raise ValueError("a program needs at least one qubit")
         self.qubits = qubits
@@ -184,6 +190,7 @@ class QProgram:
             if not 0 <= k < qubits:
                 raise ValueError("qubit {} out of range".format(k))
             self._initial_states[k] = s
+        self._prepare_when_used = prepare_when_used
         self._stages: list[Stage] = []
         self.levels = LevelManager()
         self._graph: BaseGraph | None = None
@@ -381,12 +388,15 @@ class QProgram:
         check_rewrite(rewrite)
         return self.levels.level_up(level, start, end, name, role, rewrite)
 
-    def group_stages(self, groups: Sequence[tuple[Any, ...]]) -> int:
+    def group_stages(self, groups: Sequence[tuple[Any, ...]], one_level: bool = False) -> int:
         """Level up from the stages in one call; returns the new level.
 
         ``groups`` lists ``(first_stage, last_stage, name, role, rewrite)``
         (``name``, ``role`` and ``rewrite`` optional) for consecutive,
         non-overlapping ranges of stages; stages not covered stay blocks of their own.
+        By default each group is a :meth:`level_up` of its own, so the levels
+        in between hold some of the groups and the last one all of them;
+        ``one_level=True`` makes only that last level, level 1.
         """
         spans = sorted(((g[0], g[1], g[2] if len(g) > 2 else None, g[3] if len(g) > 3 else None,
                          g[4] if len(g) > 4 else None) for g in groups), key=lambda s: s[0])
@@ -395,10 +405,12 @@ class QProgram:
                 raise ValueError("groups {}..{} and {}.. overlap".format(a0, a1, b0))
         for span in spans:
             check_rewrite(span[4])
+            if not 0 <= span[0] <= span[1] < self.num_stages:
+                raise IndexError("invalid stage range {}..{}".format(span[0], span[1]))
+        if one_level:
+            return self.levels.group(0, spans)
         level = 0
         for first, last, name, role, rewrite in reversed(spans):   # from the end, so indices do not shift
-            if not 0 <= first <= last < self.num_stages:
-                raise IndexError("invalid stage range {}..{}".format(first, last))
             level = self.levels.level_up(level, first, last, name, role, rewrite)
         return level
 
@@ -518,17 +530,121 @@ class QProgram:
             return g
         return self._without_classical(self._subdiagram(set(range(stage + 1))))
 
-    def code_at(self, stage: int) -> Any:
+    def code_at(self, stage: int, generators: str = 'lightest', outcomes: str = 'earliest') -> Any:
         """The code the qubits are in after ``stage`` (question 1): a :class:`~zxqec.codes.StabilizerCode`.
 
         Read off the cut :meth:`prefix_graph`; qubits are labelled by their
         program (logical) index and carry their physical wire as ``positions``.
         Stabilizer signs are Boolean functions of the outcomes measured so far.
+        ``generators`` is passed to :func:`~zxqec.codes.code_of` (``'lightest'``
+        or ``'echelon'``). A check that several rounds measure has, in a run
+        without faults, the same result each time (a detector says so); a sign
+        that depends on these results is written in the earliest of them, or with
+        ``outcomes='latest'`` in the latest one measured by ``stage``
+        (:meth:`~zxqec.codes.StabilizerCode.signs_modulo` with the detectors of the
+        cut). A sign fixed by the preparation stays ``+`` or ``-``. Outcomes are
+        ordered by their names (``c[3]`` before ``c[12]``), so their numbers should
+        follow the order of measurement.
         """
-        return self._code(self.prefix_graph(stage))
+        if outcomes not in ('earliest', 'latest'):
+            raise ValueError("outcomes must be 'earliest' or 'latest', not {!r}".format(outcomes))
+        g = self.prefix_graph(stage)
+        code = self._code(g, generators)
+        if outcomes == 'latest':
+            from ..gpf import reduce_gpf
+            code = code.signs_modulo(reduce_gpf(g.copy()).detectors, latest=True)
+        return code
+
+    def measured_operators(self, stage: int) -> dict[str, Any]:
+        """What each measurement of a circuit ``stage`` measures: a Pauli operator on the qubits entering the stage.
+
+        For each result, the operator ``P`` (a :class:`~zxqec.codes.PauliString` on the
+        program's logical qubits, with its sign) whose eigenvalue on the state entering the
+        stage is ``(-1)`` to the result, in every run: the measured ``Z`` carried back
+        through the stage's gates (:meth:`stage_circuit`; Clifford gates conjugate it, as
+        Stim's ``PauliString.before`` does). A reset in the stage takes away the ``Z`` it
+        fixes, and so does a qubit still in its initial state (``'0'``; for ``'+'``, the
+        ``X``; a qubit not used by an earlier stage); any other part on such a qubit stays
+        in ``P``. A result whose operator does not commute with a reset in the stage has no
+        fixed operator and maps to ``None``; so, to be safe, does one whose operator meets an
+        earlier measurement of the stage or a gate that is not Clifford (even where, as for a
+        ``T`` the operator commutes with, a fixed operator would exist). Keys are the
+        results' names, as in the program's diagram. For a round of checks, these are the
+        checks it measures, each with the result that reads it.
+        """
+        import stim
+
+        from ..codes.pauli import PauliString
+        from .program import _AUTO_VAR as auto
+
+        st = self._stages[stage]
+        if st.kind != 'circuit':
+            return {}
+        n = self.qubits
+        used: set[int] = set()
+        for j in range(stage):
+            if self._stages[j].kind == 'circuit':
+                for gate in self._stages[j].circuit.gates:
+                    used |= set(used_qubits(gate))
+        names = {'CNOT': 'CX', 'CZ': 'CZ', 'SWAP': 'SWAP', 'HAD': 'H', 'NOT': 'X', 'Z': 'Z', 'Y': 'Y'}
+
+        def instruction(gate: Gate) -> str | None:
+            kind = type(gate).__name__
+            if kind == 'S':
+                return 'S_DAG {}'.format(gate.target) if getattr(gate, 'adjoint', False) else 'S {}'.format(gate.target)
+            if kind not in names:
+                return None
+            qubits = (gate.control, gate.target) if hasattr(gate, 'control') else (gate.target,)
+            return '{} {}'.format(names[kind], ' '.join(str(q) for q in qubits))
+
+        def name_of(gate: Gate) -> str:
+            if gate.result_symbol is not None:
+                sym = gate.result_symbol
+            elif gate.result_bit is not None:
+                sym = 'c[{}]'.format(gate.result_bit)
+            else:
+                sym = 'm{}'.format(gate.target)
+            return 's{}_{}'.format(stage, sym.lstrip('_')) if auto.match(sym) else sym
+
+        gates = list(st.circuit.gates)
+        out: dict[str, Any] = {}
+        for i, gate in enumerate(gates):
+            if type(gate).__name__ != 'Measurement':
+                continue
+            p: Any = stim.PauliString(n)
+            p[gate.target] = 'Z'
+            for earlier in reversed(gates[:i]):
+                kind = type(earlier).__name__
+                if kind == 'Reset':
+                    letter = p[earlier.target]
+                    if letter in (1, 2):                # X or Y on a fresh |0>: no fixed result
+                        p = None
+                        break
+                    p[earlier.target] = 0               # Z on |0> reads +1
+                elif kind == 'Measurement':
+                    if p[earlier.target] != 0:
+                        p = None
+                        break
+                else:
+                    op = instruction(earlier)
+                    if op is None:
+                        p = None
+                        break
+                    p = p.before(stim.Circuit(op))
+            if p is not None:
+                for k, state in self._initial_states.items():
+                    if k not in used and p[k] == (3 if state == '0' else 1):
+                        p[k] = 0                        # the Z of a fresh |0>, the X of a fresh |+>: +1
+            if p is None:
+                out[name_of(gate)] = None
+                continue
+            xs, zs = p.to_numpy()
+            sign = 0 if p.sign == 1 else 1
+            out[name_of(gate)] = PauliString.from_arrays(xs.astype(int), zs.astype(int), sign)
+        return out
 
     @staticmethod
-    def _code(g: BaseGraph) -> Any:
+    def _code(g: BaseGraph, generators: str = 'lightest') -> Any:
         from ..codes import code_of
 
         def position(b: Any) -> int:
@@ -537,7 +653,7 @@ class QProgram:
             (w,) = list(g.neighbors(b))
             return int(g.qubit(w) // 1) if g.type(w) != VertexType.BOUNDARY else int(g.qubit(b) // 1)
         return code_of(g, labels=[get_logical_qubit(g, b) for b in g.outputs()],
-                       positions=[position(b) for b in g.outputs()])
+                       positions=[position(b) for b in g.outputs()], generators=generators)
 
     def logical_action(self, level: int | None = None, index: int | None = None) -> Any:
         """What a block -- or, without arguments, the whole program -- does to the encoded qubits.
@@ -635,6 +751,8 @@ class QProgram:
     def _build(self) -> BaseGraph:
         master: BaseGraph | None = None
         live = set(range(self.qubits))       # logical wires that currently have an output
+        if self._prepare_when_used:          # prepared where first used: no wire before that
+            live -= set(self._initial_states)
         next_tick = 0
         for st in self._stages:
             sg = self._stage_graph(st, live, next_tick)
@@ -719,15 +837,16 @@ class QProgram:
         for gate in c.gates:
             for k in used_qubits(gate):
                 first_gate.setdefault(k, gate)
-        if st.index == 0:
-            for k, state in self._initial_states.items():
-                init[k] = True
-                if state == '+':
-                    c.gates.insert(0, HAD(k))
-                elif isinstance(first_gate.get(k), Reset):
-                    c.gates.remove(first_gate[k])   # resetting a fresh |0> is a no-op
+        for k, state in self._initial_states.items():
+            if (self._first_use(k) if self._prepare_when_used else 0) != st.index:
+                continue
+            init[k] = True
+            if state == '+':
+                c.gates.insert(0, HAD(k))
+            elif isinstance(first_gate.get(k), Reset):
+                c.gates.remove(first_gate[k])   # resetting a fresh |0> is a no-op
         for k in range(n):
-            if k in live or st.index == 0 and k in self._initial_states:
+            if k in live or init[k]:
                 continue
             # the wire was measured in an earlier stage
             if k not in first_gate:
@@ -739,7 +858,9 @@ class QProgram:
                 raise ValueError("qubit {} was measured before stage {} and is reused by {} "
                                  "without a Reset".format(k, st.index, first_gate[k]))
         durations = dict(self.gate_durations)
-        c.gates = _grouped(c.gates, durations)
+        # a conditional non-Pauli rotation as ParityControlled writes one, taking the time of a ConditionalGate
+        durations[_ConditionalRotation] = durations.get(ConditionalGate, durations.get('ConditionalGate', 0))
+        c.gates = _grouped([_gadget_form(gate) for gate in c.gates], durations)
         g = circuit_to_graph(c, initialize_qubits=init if any(init) else None, gate_durations=durations)
         # drop the wires of dead qubits the stage does not touch
         if strip:
@@ -755,6 +876,11 @@ class QProgram:
             g.set_inputs(tuple(ins))
             g.set_outputs(tuple(outs))
         return g
+
+    def _first_use(self, k: int) -> int | None:
+        """The first stage whose circuit uses qubit ``k`` (``None`` if none does)."""
+        return next((st.index for st in self._stages if st.kind == 'circuit'
+                     and any(k in used_qubits(g) for g in st.circuit.gates)), None)
 
     def _permutation_graph(self, st: Stage, live: set[int]) -> BaseGraph:
         """Wires from the old physical positions of the live qubits to the new ones.

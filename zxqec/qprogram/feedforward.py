@@ -33,15 +33,31 @@ written into phases, so the correction stays symbolic like the outcomes:
 
 The phases stay affine in the outcomes, which is what :func:`~zxqec.gpf.reduce_gpf`
 needs.
+
+A ``ConditionalGate`` around a rotation by an angle that is not a multiple of pi
+(OpenQASM's ``if(c==1) s q[0];``) is written the same way when a
+:class:`~zxqec.qprogram.QProgram` builds its diagram. PyZX writes it as one spider
+with phase (condition) * angle, which is not affine in the outcomes, and
+:func:`~zxqec.codes.code_of` cannot read it. The condition ``register == value``
+is a product of the register's bits (``c[i]``, or ``1 + c[i]`` where the value
+has a 0), and a product of ``k`` bits is a sum of parities,
+
+    x_1 ... x_k = sum over non-empty S of (-1)^(|S|+1) / 2^(k-1) * (XOR of the x_i in S),
+
+so the rotation becomes ``2^k - 1`` rotations, each controlled by a parity as
+above: ``S`` when ``c == 3`` is ``T`` when ``c[0]``, ``T`` when ``c[1]`` and
+``T^dag`` when ``c[0] + c[1]``. With a register of one bit it is one gadget
+whose hub carries the condition.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from fractions import Fraction
+from itertools import combinations
 from typing import Any
 
-from pyzx.circuit.gates import Gate
+from pyzx.circuit.gates import ConditionalGate, Gate, XPhase, ZPhase
 from pyzx.symbolic import new_var
 from pyzx.utils import VertexType
 
@@ -99,21 +115,83 @@ class ParityControlled(Gate):
         raise TypeError("a parity-controlled gate has no OpenQASM 2 form")
 
     def to_graph(self, g: Any, q_mapper: Any, c_mapper: Any) -> None:
-        parity: Any = None
-        for name in self.bits:
-            v = new_var(name, True, g.var_registry)
-            parity = v if parity is None else parity + v
-        wire = VertexType.Z if self.axis == 'Z' else VertexType.X
-        other = VertexType.X if self.axis == 'Z' else VertexType.Z
-        r = q_mapper.next_row(self.target)
-        if self.angle == 1:
-            self.graph_add_node(g, q_mapper, wire, self.target, r, parity)
-        else:
-            half = self.angle / 2
-            w = self.graph_add_node(g, q_mapper, wire, self.target, r, half)
-            q = q_mapper.to_qubit(self.target)
-            hub = g.add_vertex(other, q + 0.35, r, parity)
-            leaf = g.add_vertex(wire, q + 0.7, r, (-half) % 2)
-            g.add_edge((w, hub))
-            g.add_edge((hub, leaf))
-        q_mapper.advance_next_row(self.target)
+        _controlled_rotation(self, g, q_mapper, self.axis, self.angle, _parity(self.bits, 0, g))
+
+
+class _ConditionalRotation(Gate):
+    """PyZX's ``ConditionalGate`` around a Z- or X-rotation by a non-Pauli angle, as parity-controlled rotations.
+
+    See the module docstring; :meth:`parities` lists the rotations. Only the
+    diagram uses it (:func:`_gadget_form`): the stage keeps the ``ConditionalGate``.
+    """
+    name = 'ConditionalRotation'
+
+    def __init__(self, gate: ConditionalGate) -> None:
+        inner = gate.inner_gate
+        self.gate = gate
+        self.target = inner.target
+        self.axis = 'Z' if isinstance(inner, ZPhase) else 'X'
+        self.angle = Fraction(inner.phase) % 2
+        if hasattr(gate, 'layer'):
+            self.layer = gate.layer                     # see same_layer
+
+    def __str__(self) -> str:
+        return str(self.gate)
+
+    def parities(self) -> list[tuple[Fraction, tuple[str, ...], int]]:
+        """``(angle, outcomes, constant)`` per non-empty set of the register's bits: the angle applied when the parity is 1."""
+        k = self.gate.register_size
+        names = ['{}[{}]'.format(self.gate.condition_register, i) for i in range(k)]
+        zeros = {i for i in range(k) if not self.gate.condition_value >> i & 1}     # literal 1 + c[i]
+        out = []
+        for size in range(1, k + 1):
+            share = (self.angle * (-1) ** (size + 1) / 2 ** (k - 1)) % 2
+            for bits in combinations(range(k), size):
+                out.append((share, tuple(names[i] for i in bits), len(zeros.intersection(bits)) % 2))
+        return out
+
+    def to_graph(self, g: Any, q_mapper: Any, c_mapper: Any) -> None:
+        for angle, names, const in self.parities():
+            _controlled_rotation(self, g, q_mapper, self.axis, angle, _parity(names, const, g))
+
+
+def _gadget_form(gate: Gate) -> Gate:
+    """``gate`` as a :class:`_ConditionalRotation` if it is a ``ConditionalGate`` around a non-Pauli Z- or X-rotation.
+
+    Any other gate is returned as it is: also a ``ConditionalGate`` around a
+    Pauli (PyZX's phase is then the condition times pi, which ``reduce_gpf`` reads)
+    or around a rotation by a symbolic angle.
+    """
+    if not isinstance(gate, ConditionalGate) or not isinstance(gate.inner_gate, (ZPhase, XPhase)):
+        return gate
+    phase = gate.inner_gate.phase
+    if not isinstance(phase, (int, float, Fraction)) or Fraction(phase).denominator == 1:
+        return gate
+    return _ConditionalRotation(gate)
+
+
+def _parity(names: Sequence[str], const: int, g: Any) -> Any:
+    """The phase ``c_1 + ... + c_m + const`` (units of pi) of the outcomes ``names``."""
+    parity: Any = None
+    for name in names:
+        v = new_var(name, True, g.var_registry)
+        parity = v if parity is None else parity + v
+    return parity + 1 if const else parity
+
+
+def _controlled_rotation(gate: Gate, g: Any, q_mapper: Any, axis: str, angle: Fraction, parity: Any) -> None:
+    """Write a rotation by ``angle`` (units of pi) about ``axis`` on ``gate.target``, applied when ``parity`` is 1."""
+    wire = VertexType.Z if axis == 'Z' else VertexType.X
+    other = VertexType.X if axis == 'Z' else VertexType.Z
+    r = q_mapper.next_row(gate.target)
+    if angle == 1:
+        gate.graph_add_node(g, q_mapper, wire, gate.target, r, parity)
+    else:
+        half = angle / 2
+        w = gate.graph_add_node(g, q_mapper, wire, gate.target, r, half)
+        q = q_mapper.to_qubit(gate.target)
+        hub = g.add_vertex(other, q + 0.35, r, parity)
+        leaf = g.add_vertex(wire, q + 0.7, r, (-half) % 2)
+        g.add_edge((w, hub))
+        g.add_edge((hub, leaf))
+    q_mapper.advance_next_row(gate.target)

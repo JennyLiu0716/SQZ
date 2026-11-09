@@ -450,11 +450,13 @@ GROUPS_D5 = [(0, 0, 'inject T', 'injection'), (1, 2, 'double-check d=3', 'cultiv
 def test_d5_double_check_block_is_a_logical_measurement(program_d5):
     # as a block, the d = 5 double-check is a measurement in {T-dag|+>, T-dag|->} split by its own outcome
     # c[73] alone: outcomes measured before it that the program's detectors fix (c[21], which appears in a
-    # sign of the code before it, c[65], c[70]) are read as their values, and no parity is counted twice
+    # sign of the code before it, c[65], c[70]) are read as their values, and no parity is counted twice;
+    # read so, it stays in the code (with c[21] = 1 some of its T gadgets would act as T-dag)
     p, _circ = program_d5
     s = p.summary(p.group_stages(GROUPS_D5))
     block = s.blocks[4]
     assert block.ok and block.action.measured_basis() == ('T^dag|+>', 'T^dag|->')
+    assert block.action.stays_in_code() is True
     assert sorted(br.conditions for br in block.action.branches()) == [[('c[73]', 0)], [('c[73]', 1)]]
     assert [b.ok for b in s.blocks] == [True, False, True, True, True]
     # the d = 3 double-check ends in the stage that also prepares the six pairs of the growth, so the code

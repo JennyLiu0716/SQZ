@@ -37,6 +37,12 @@ spiders, one colour each: for the diagram of a code (one spider per check, joine
 to its qubits) these are the checks' faces or cells, so a code's geometry shows
 (the plaquettes of the surface code, the faces of the Steane code, the cells of
 the tetrahedral ``[[15,1,3]]`` code).
+
+:func:`relaxed_topology` turns such a layout into a :class:`~zxqec.spacetime.Topology`
+for the qubits: a place for each on a plane, qubits that share a check close
+together, joined around the edge of each check's face. It is a layout found
+from the diagram, to draw a program in space and time on; it is not checked
+against any hardware.
 """
 
 from __future__ import annotations
@@ -47,7 +53,7 @@ import numpy as np
 from pyzx.graph.base import BaseGraph
 from pyzx.utils import VertexType
 
-__all__ = ['RELAX_METHODS', 'SHADE_COLORS', 'relax_layout', 'draw_relaxed', 'draw_relaxed_3d']
+__all__ = ['RELAX_METHODS', 'SHADE_COLORS', 'relax_layout', 'draw_relaxed', 'draw_relaxed_3d', 'relaxed_topology']
 
 RELAX_METHODS = ('kamada-kawai', 'spring')
 
@@ -172,15 +178,21 @@ def _shaded(g: BaseGraph, shade: Any) -> list[tuple[Any, list[Any]]]:
     return [(v, sorted(w for w in g.neighbors(v) if g.type(w) != VertexType.BOUNDARY)) for v in spiders]
 
 
-def _polygon(points: np.ndarray) -> np.ndarray | None:
-    """The corners of the convex hull of planar ``points`` (any dimension), in order around it; None if too few."""
+def _hull(points: np.ndarray) -> np.ndarray | None:
+    """The indices of the corners of the convex hull of planar ``points`` (any dimension), in order; None if too few."""
     centre = points.mean(axis=0)
     _, sv, basis = np.linalg.svd(points - centre)
     if len(points) < 3 or sv[1] < 1e-9 * max(sv[0], 1e-12):
         return None
     flat = (points - centre) @ basis[:2].T
     from scipy.spatial import ConvexHull
-    return points[ConvexHull(flat).vertices]
+    return ConvexHull(flat).vertices
+
+
+def _polygon(points: np.ndarray) -> np.ndarray | None:
+    """The corners of the convex hull of planar ``points`` (any dimension), in order around it; None if too few."""
+    corners = _hull(points)
+    return None if corners is None else points[corners]
 
 
 def draw_relaxed(g: BaseGraph, method: str = 'kamada-kawai', seed: int = 0, spacing: float = 1.2,
@@ -296,3 +308,47 @@ def draw_relaxed_3d(g: BaseGraph, method: str = 'kamada-kawai', seed: int = 0, s
         if 'ax' not in kwargs:
             fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
     return _finish(fig) if finish else fig
+
+
+def relaxed_topology(g: BaseGraph, method: str = 'kamada-kawai', seed: int = 0) -> Any:
+    """A layout of the qubits of ``g`` on a plane, found from its edges alone: a :class:`~zxqec.spacetime.Topology`.
+
+    ``g`` is a diagram with one spider on each output (the qubits) and other
+    spiders joined to some of them, such as a normal form or a code's
+    :func:`~zxqec.codes.check_diagram` (the other spiders are then the checks).
+    Each output becomes a node, numbered by its qubit (``get_logical_qubit``, else
+    its place among the outputs) and placed where :func:`relax_layout`
+    (``boundaries='outward'``) puts its spider, as :func:`draw_relaxed` draws it:
+    qubits that share spiders end up close. For each
+    other spider, the qubits it touches are joined around the edge of their face
+    (their convex hull, in order); two qubits are joined directly. Raises
+    ``ValueError`` if an output is not on a spider of its own.
+    """
+    from .subdiagram import get_logical_qubit
+    from .topology import Topology
+
+    qubit_of: dict[Any, int] = {}
+    for i, b in enumerate(g.outputs()):
+        (s, *rest) = list(g.neighbors(b)) or [None]
+        if s is None or rest or g.type(s) == VertexType.BOUNDARY or s in qubit_of:
+            raise ValueError("relaxed_topology: output {} is not on a spider of its own".format(b))
+        qubit_of[s] = get_logical_qubit(g, b, i)
+    pos = relax_layout(g, 2, method, seed, boundaries='outward')
+    topology = Topology(2)
+    for s, q in sorted(qubit_of.items(), key=lambda item: item[1]):
+        topology.add_node(q, (pos[s][0], -pos[s][1]))       # the way draw_relaxed draws it
+    for v in sorted(g.vertices()):
+        if v in qubit_of or g.type(v) == VertexType.BOUNDARY:
+            continue
+        qs = sorted(qubit_of[w] for w in g.neighbors(v) if w in qubit_of)
+        if len(qs) == 2:
+            ring = qs
+        elif len(qs) > 2:
+            corners = _hull(np.array([topology.coordinates(q) for q in qs], dtype=float))
+            ring = [qs[i] for i in corners] + [qs[corners[0]]] if corners is not None else qs
+        else:
+            continue
+        for a, b in zip(ring, ring[1:]):
+            if a != b and not topology.are_adjacent(a, b):
+                topology.add_edge(a, b)
+    return topology

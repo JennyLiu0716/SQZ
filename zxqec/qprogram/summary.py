@@ -179,6 +179,13 @@ def _checks(b: BlockSummary) -> list[tuple[bool, str]]:
             checks.append((not bad, "transversal: no two qubits of one code block are connected by its gates"
                            if not bad else "not transversal: its gates connect qubits {} of the code block on "
                            "qubits {}".format(", ".join(map(str, bad[0][0])), _qubits(bad[0][1]))))
+        by = _same_code_by(b.code_in, b.code_out)
+        if by is not None:                       # a gate on one code: are the logical operators named alike?
+            matched = "qubits matched by label" if by == 'label' else "qubits matched by their place on the chip"
+            same = b.code_out.same_logicals_as(b.code_in, by=by)
+            checks.append((bool(same), "ends in the code it started in, with the same logical X and Z ({})".format(
+                matched) if same else "ends in the code it started in ({}), but its logical X and Z are not those "
+                "of that code: the logical action above is named after the code after the block".format(matched)))
     elif role == 'correction':
         runs = ["{} {}".format(br.operation, br.when()) for br in act.branches()]
         checks.append((None not in ops, "applies " + "; ".join(runs)))
@@ -276,6 +283,19 @@ def _variables(text: str) -> list[str]:
 def _when(outcomes: dict) -> str:
     ones = sorted(k for k, v in outcomes.items() if v)
     return "the outcomes are all 0" if not ones else " = ".join(ones) + " = 1"
+
+
+def _same_code_by(code_in: Any, code_out: Any) -> str | None:
+    """'label' or 'position' if the block ends in the code it started in, matching qubits that way; else None."""
+    if code_in is None or code_out is None:
+        return None
+    for by in ('label', 'position'):
+        try:
+            if code_out.same_code_as(code_in, by=by):
+                return by
+        except ValueError:                       # positions not known
+            pass
+    return None
 
 
 def _k(code: Any) -> int:

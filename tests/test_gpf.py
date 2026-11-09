@@ -377,7 +377,9 @@ def test_reduce_modulo_writes_a_parity_in_the_earliest_outcomes():
     assert str(reduced) == str(v['c[1]'] + v['c[2]'] + Fraction(5, 4))        # c3 = c2 + 1; 9/4 + 1 = 5/4 mod 2
     assert reduce_modulo(v['c[3]'] + v['c[2]'], [v['c[3]'] + v['c[2]']]) == 0
     product = v['c[1]'] * v['c[2]']
-    assert reduce_modulo(product, [v['c[1]']]) is product                    # not a parity: unchanged
+    assert reduce_modulo(product, [v['c[3]']]) is product                    # not a parity, none of it fixed: unchanged
+    assert reduce_modulo(product, [v['c[1]']]) == 0                          # c[1] = 0 fixes the product
+    assert str(reduce_modulo(product, [v['c[1]'] + 1])) == str(v['c[2]'])    # c[1] = 1 leaves the parity c[2]
 
 
 def test_phases_modulo_returns_a_rewritten_copy():
@@ -471,7 +473,11 @@ def test_layout_gpf_puts_the_layers_side_by_side():
     assert all(d.row(x) > 1 for x in xs) and all(d.row(b) == d.row(xs[0]) + 1 for b in outs)
     for leaf in (v for v in d.vertices() if is_leaf(d, v)):
         (hub,) = list(d.neighbors(leaf))
-        assert d.qubit(leaf) == d.qubit(hub) and d.row(leaf) > d.row(hub)
+        assert d.qubit(leaf) == d.qubit(hub) and d.row(leaf) - d.row(hub) == pytest.approx(0.7)
+    layout_gpf(d, leaf_gap=1.5)                                   # room for long labels
+    for leaf in (v for v in d.vertices() if is_leaf(d, v)):
+        (hub,) = list(d.neighbors(leaf))
+        assert d.row(leaf) - d.row(hub) == pytest.approx(1.5)
 
 
 def test_to_gpf_steps_records_the_steps_of_to_gpf():
@@ -541,3 +547,15 @@ def test_copy_leaf_copies_a_measurement_result_and_refuses_what_the_rule_does_no
     k.set_phase(leaf, Fraction(1, 4))
     with pytest.raises(ValueError, match='not 0, pi'):
         copy_leaf(k, leaf)
+
+
+def test_reduce_modulo_writes_in_the_latest_outcomes_on_request():
+    """Three rounds read the same check (two detectors): earliest by default, latest with latest=True."""
+    from pyzx.symbolic import new_var
+    from zxqec.gpf import reduce_modulo
+    c = {i: new_var('c[{}]'.format(i), True) for i in range(1, 4)}
+    dets = [c[1] + c[2], c[2] + c[3]]
+    assert str(reduce_modulo(c[3], dets)) == 'c[1]'
+    assert str(reduce_modulo(c[1], dets, latest=True)) == 'c[3]'
+    assert str(reduce_modulo(c[2] + 1, dets, latest=True)).replace(' ', '') in ('c[3]+1', '1+c[3]')
+    assert reduce_modulo(c[1] + c[3], dets, latest=True) == 0

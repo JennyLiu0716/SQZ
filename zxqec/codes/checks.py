@@ -67,7 +67,7 @@ def check_diagram(checks: Any, kind: str = 'X') -> BaseGraph:
     return g
 
 
-def surface_code_checks(d: int) -> tuple[np.ndarray, np.ndarray]:
+def surface_code_checks(d: int, cols: int | None = None, parity: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """The X- and Z-checks of the rotated surface code of distance ``d``.
 
     Qubit ``r * d + c`` sits at row ``r``, column ``c`` of a ``d x d`` grid. The
@@ -75,19 +75,28 @@ def surface_code_checks(d: int) -> tuple[np.ndarray, np.ndarray]:
     faces of two qubits on the boundary: X-checks on the top and bottom edges,
     Z-checks on the left and right. One logical qubit; for odd ``d``,
     ``(d^2 - 1) / 2`` checks of each kind.
+
+    ``cols`` gives a rectangular patch of ``d`` rows and ``cols`` columns (qubit
+    ``r * cols + c``), the kind used by lattice surgery. ``parity=1`` swaps the
+    checkerboard: the face whose top-left qubit is at row ``r``, column ``c`` is an
+    X-check when ``r + c + parity`` is even. A patch cut out of a larger one at an
+    odd offset has that checkerboard.
     """
     if d < 2:
         raise ValueError("d must be at least 2")
+    cols = d if cols is None else cols
+    if cols < 2:
+        raise ValueError("cols must be at least 2")
     rows: dict[str, list[list[int]]] = {'X': [], 'Z': []}
     for r in range(-1, d):
-        for c in range(-1, d):
-            cells = [(r + a, c + b) for a in (0, 1) for b in (0, 1) if 0 <= r + a < d and 0 <= c + b < d]
-            kind = 'X' if (r + c) % 2 == 0 else 'Z'
+        for c in range(-1, cols):
+            cells = [(r + a, c + b) for a in (0, 1) for b in (0, 1) if 0 <= r + a < d and 0 <= c + b < cols]
+            kind = 'X' if (r + c + parity) % 2 == 0 else 'Z'
             inside = len(cells) == 4
-            edge = len(cells) == 2 and ((kind == 'X' and r in (-1, d - 1)) or (kind == 'Z' and c in (-1, d - 1)))
+            edge = len(cells) == 2 and ((kind == 'X' and r in (-1, d - 1)) or (kind == 'Z' and c in (-1, cols - 1)))
             if inside or edge:
-                row = [0] * (d * d)
+                row = [0] * (d * cols)
                 for a, b in cells:
-                    row[a * d + b] = 1
+                    row[a * cols + b] = 1
                 rows[kind].append(row)
     return np.array(rows['X'], dtype=np.uint8), np.array(rows['Z'], dtype=np.uint8)

@@ -164,3 +164,81 @@ def test_every_detector_is_necessary(reduced):
         ga = g.substitute_variables(a)
         zx.full_reduce(ga)
         assert np.allclose(ga.to_tensor(preserve_scalar=True), 0)
+
+
+def test_signs_in_the_latest_round():
+    """code_at(..., outcomes='latest'): a check measured by several rounds has its sign in the last round's result.
+
+    The detectors c[5] = c[1], ..., c[16] = c[2] say that the later rounds measure the same values, so both codes
+    are the same in every run without faults, written in different results."""
+    from zxqec.gpf import equal_for_all_assignments, reduce_gpf, reduce_modulo
+    p = fold_transversal_h()
+    p.graph()
+    signs = {}
+    for stage in (0, 3, 6):
+        early, late = p.code_at(stage).data(), p.code_at(stage, outcomes='latest').data()
+        signs[stage] = sorted(str(s.sign) for s in late.stabilizers if str(s.sign) != '0')
+        dets = reduce_gpf(p.prefix_graph(stage)).detectors
+        for a, b in zip(early.stabilizers, late.stabilizers):
+            assert a.x == b.x and a.z == b.z                    # the same generators
+            assert reduce_modulo(a.sign, dets) == reduce_modulo(b.sign, dets)   # the same sign in every such run
+        assert equal_for_all_assignments(early.encoder(), late.encoder(), constraints=dets)
+    assert signs[0] == ['c[1]', 'c[2]', 'c[3]', 'c[4]']
+    assert signs[3] == ['c[5]', 'c[6]', 'c[7]', 'c[8]']             # the Z checks of code 2, measured in stage 2
+    assert signs[6] == ['c[13]', 'c[14]', 'c[15]', 'c[16]']         # the same checks, measured again after the turn
+    with pytest.raises(ValueError):
+        p.code_at(0, outcomes='middle')
+
+
+def test_measured_operators_are_the_checks_each_round_reads():
+    """QProgram.measured_operators: each result of a round of checks with the check it measures (logical labels)."""
+    p = fold_transversal_h()
+
+    def letters(op):
+        return ''.join(op.letters)[1:10]                 # data qubits 1..9
+
+    first = p.measured_operators(0)
+    assert letters(first['c[1]']) == 'XXIXXIIII'         # the first round: X checks on |0> data (random results)
+    assert letters(first['c[2]']) == 'IXXIIIIII'
+    z2, x2 = p.measured_operators(2), p.measured_operators(3)
+    assert {k: letters(v) for k, v in z2.items()} == {'c[5]': 'ZZIZZIIII', 'c[6]': 'IZZIIIIII', 'c[7]': 'IIIIZZIZZ',
+                                                       'c[8]': 'IIIIIIZZI'}
+    assert {k: letters(v) for k, v in x2.items()} == {'c[9]': 'XIIXIIIII', 'c[10]': 'IXXIXXIII',
+                                                       'c[11]': 'IIIXXIXXI', 'c[12]': 'IIIIIXIIX'}
+    assert all(v.sign == 0 and not any(v.x[10:] + v.z[10:]) for v in list(z2.values()) + list(x2.values()))
+    assert p.measured_operators(4) == {}                 # a permutation measures nothing
+    last = p.measured_operators(7)
+    assert last['c[26]'] is None                         # a data qubit read out after the decoding: no fixed operator
+
+
+def test_draw_measurement_puts_each_result_on_its_check():
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    p = fold_transversal_h()
+    coords = {q: ((q - 1) % 3 + 1, (q - 1) // 3 + 1) for q in range(1, 10)}
+    for stage, kind, names in ((3, 'X', ['c[10]', 'c[11]', 'c[12]', 'c[9]']), (6, 'X', ['c[17]', 'c[18]', 'c[19]', 'c[20]'])):
+        code = p.code_at(stage)
+        bare = code.draw_measurement(coords, kind, label_size=7).axes[0]
+        assert not bare.texts                            # these checks are + in every run
+        ax = code.draw_measurement(coords, kind, results=p.measured_operators(stage), label_size=7).axes[0]
+        assert sorted(t.get_text() for t in ax.texts) == names
+    plt.close('all')
+
+
+def test_gpf_checks_gives_the_round_of_code_2_as_its_checks():
+    # 'gpf' writes the Z checks of code 2 as sums (c[5] + c[7] + c[8], ...) that bend three data wires across the
+    # grid; 'gpf_checks' gives one spider per check, joined to that check's data qubits, and every data wire straight
+    from zxqec.spacetime import get_logical_qubit
+    plaquettes = {'c[5]': [1, 2, 4, 5], 'c[6]': [2, 3], 'c[7]': [5, 6, 8, 9], 'c[8]': [7, 8]}
+    for rewrite, bent in (('gpf', 3), ('gpf_checks', 0)):
+        p = fold_transversal_h()
+        level = p.group_stages([(2, 2, 'Z checks (code 2)', None, rewrite)], one_level=True)
+        g = p.reduced_block(level, 2).graph
+        ins = {next(iter(g.neighbors(b))): get_logical_qubit(g, b) for b in g.inputs()}
+        outs = {next(iter(g.neighbors(b))) for b in g.outputs()}
+        assert sum(1 for s in outs if len([u for u in g.neighbors(s) if u in ins]) != 1) == bent
+        if rewrite == 'gpf_checks':
+            checks = {str(g.phase(v)): sorted(ins[u] for u in g.neighbors(v)) for v in g.vertices()
+                      if g.type(v) != VertexType.BOUNDARY and v not in ins and v not in outs}
+            assert checks == plaquettes

@@ -30,7 +30,7 @@ gates as the atomic unit.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 
 __all__ = ['Block', 'LevelManager', 'ROLES']
@@ -159,6 +159,31 @@ class LevelManager:
         children = tuple(blocks[start:end + 1])
         composite = Block(tuple(s for c in children for s in c.stages), children, name, role, rewrite)
         return self._push_level(level, blocks[:start] + [composite] + blocks[end + 1:])
+
+    def group(self, level: int, spans: Sequence[tuple[int, int, str | None, str | None, str | None]]) -> int:
+        """Group several ranges of blocks of ``level`` at once, into one new level.
+
+        ``spans`` lists ``(start, end, name, role, rewrite)`` for consecutive,
+        non-overlapping ranges of block indices, each grouped as by
+        :meth:`level_up`; blocks not covered stay as they are. Returns the index
+        of the new level.
+        """
+        blocks = self._level(level)
+        spans = sorted(spans, key=lambda s: s[0])
+        for (a0, a1, *_), (b0, *_) in zip(spans, spans[1:]):
+            if b0 <= a1:
+                raise ValueError("ranges {}..{} and {}.. overlap".format(a0, a1, b0))
+        out: list[Block] = []
+        k = 0
+        for start, end, name, role, rewrite in spans:
+            if not 0 <= start <= end < len(blocks):
+                raise IndexError("invalid range [{}, {}] for level {} with {} blocks".format(
+                    start, end, level, len(blocks)))
+            children = tuple(blocks[start:end + 1])
+            out += blocks[k:start] + [Block(tuple(s for c in children for s in c.stages), children, name, role,
+                                            rewrite)]
+            k = end + 1
+        return self._push_level(level, out + blocks[k:])
 
     def merge_blocks(self, level: int, i: int, j: int,
                      block_qubits: Callable[[Block], Iterable[int]],

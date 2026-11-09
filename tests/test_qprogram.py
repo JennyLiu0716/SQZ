@@ -108,6 +108,23 @@ def test_level_up_and_block_graphs():
     assert p.levels.num_levels == 2 and p.block(1, 0).stages == (0, 1, 2, 3)
 
 
+def test_group_stages_in_one_level():
+    # one_level=True: only the last level of the default, as level 1, with the same blocks
+    groups = [(0, 0, 'first', 'encoder'), (1, 2, 'middle', 'syndrome extraction', 'gpf')]
+    p, q = program(), program()
+    steps, one = p.group_stages(groups), q.group_stages(groups, one_level=True)
+    assert (steps, p.levels.num_levels) == (2, 3) and (one, q.levels.num_levels) == (1, 2)
+    assert [(b.stages, b.name, b.role, b.rewrite) for b in p.levels.blocks(steps)] == \
+        [(b.stages, b.name, b.role, b.rewrite) for b in q.levels.blocks(one)] == \
+        [((0,), 'first', 'encoder', None), ((1, 2), 'middle', 'syndrome extraction', 'gpf'), ((3,), 's3', None, None)]
+    assert q.block(1, 1).children == (q.block(0, 1), q.block(0, 2))
+    with pytest.raises(ValueError):
+        q.group_stages([(0, 1), (1, 2)], one_level=True)
+    with pytest.raises(IndexError):
+        q.group_stages([(2, 9)], one_level=True)
+    assert q.levels.num_levels == 2                          # a refused grouping adds no level
+
+
 def test_merge_blocks_requires_disjoint_intermediates():
     p = program()
     assert p.merge_blocks(0, 0, 3) is None                    # stages 1,2 touch qubits of stage 3
@@ -226,3 +243,28 @@ def test_physical_frame_circuits_and_quantum_graph():
     lvl = r.level_up(0, 0, 1)
     assert len(r.block_graph(lvl, 0).inputs()) == 3 and len(r.block_graph(lvl, 0, classical=False).inputs()) == 2
     assert r.block_graph(lvl, 0, classical=False).num_vertices() == r.quantum_graph().num_vertices()
+
+
+def test_prepare_when_used_moves_each_preparation_to_the_first_stage_that_uses_it():
+    # qubit 1 (|+>) is first used in stage 1 and qubit 2 (|0>) in stage 2: with prepare_when_used each is prepared
+    # inside that stage and has no wire before it (a stage's inputs are the wires coming in), and the map is the same
+    def stage(*gates):
+        c = Circuit(3)
+        for g in gates:
+            c.add_gate(g)
+        return c
+
+    def program(late):
+        p = QProgram(3, initial_states={1: '+', 2: '0'}, prepare_when_used=late)
+        p.add_circuit(stage(HAD(0), T(0)), name='one')
+        p.add_circuit(stage(CNOT(1, 0)), name='two')
+        p.add_circuit(stage(CNOT(0, 2), T(2)), name='three')
+        return p
+
+    early, late = program(False), program(True)
+    wires = [sorted(get_logical_qubit(g, v) for v in g.inputs())
+             for g in (late.stage_graph(i, classical=False) for i in range(3))]
+    assert wires == [[0], [0], [0, 1]]
+    assert [sorted(get_logical_qubit(g, v) for v in g.inputs())
+            for g in (early.stage_graph(i, classical=False) for i in range(3))] == [[0], [0, 1, 2], [0, 1, 2]]
+    assert zx.compare_tensors(early.quantum_graph(), late.quantum_graph())

@@ -1,14 +1,17 @@
 """The gadget layer simplified as a whole (zxqec.gpf.gadgets)."""
+import cmath
 import itertools
 import random
 from fractions import Fraction
 
+import numpy as np
 import pyzx as zx
 from pyzx.graph import Graph
 from pyzx.symbolic import new_var
-from pyzx.utils import VertexType
+from pyzx.utils import EdgeType, VertexType
 
-from zxqec.gpf import boolean_variables, phase_polynomial, simplify_gadgets
+from zxqec.gpf import (boolean_variables, is_gpf, is_leaf, normalize_gadget_angles, open_leaves, phase_polynomial,
+                       reduce_gpf, same_map, simplify_gadgets, to_gpf)
 from zxqec.gpf.normal_form import GPF_ROLE_KEY, LEAF
 
 
@@ -100,3 +103,132 @@ def test_simplifying_twice_changes_nothing():
     g = _layer(3, [(Fraction(1, 4), [0, 1], ['a'], []), (Fraction(3, 4), [1, 2], [], ['b'])])
     simplify_gadgets(g)
     assert not simplify_gadgets(g)
+
+
+def _read_spiders(g):
+    return [next(iter(g.neighbors(b))) for b in g.inputs()]
+
+
+def _angles(g):
+    return sorted(Fraction(g.phase(ls[0])) for _hub, ls in phase_polynomial(g)[1]
+                  if not hasattr(g.phase(ls[0]), 'terms'))
+
+
+def test_normalized_angles_keep_the_map():
+    rng = random.Random(7)
+    for _ in range(80):
+        nz = rng.randint(1, 4)
+        gadgets = [(Fraction(rng.choice([1, 2, 3, 5, 6, 7]), 4), rng.sample(range(nz), rng.randint(1, nz)),
+                    rng.sample(['a', 'b'], rng.randint(0, 1)), rng.sample(['a', 'b'], rng.randint(0, 1)))
+                   for _ in range(rng.randint(1, 5))]
+        g = _layer(nz, gadgets)
+        h = g.copy()
+        normalize_gadget_angles(h)
+        assert _same_for_all_outcomes(g, h)
+        assert all(not Fraction(1, 2) < a <= Fraction(3, 2) for a in _angles(h))
+        assert not normalize_gadget_angles(h)
+
+
+def test_five_pi_over_four_is_pi_over_four_and_a_pi_on_each_read_spider():
+    g = _layer(3, [(Fraction(5, 4), [0, 2], ['f'], [])])
+    assert normalize_gadget_angles(g)
+    assert _angles(g) == [Fraction(1, 4)]
+    assert [g.phase(z) for z in _read_spiders(g)] == [1, 0, 1]
+
+
+def test_seven_pi_over_four_and_pi_over_two_stay():
+    g = _layer(2, [(Fraction(7, 4), [0, 1], [], []), (Fraction(1, 2), [0], [], [])])
+    assert not normalize_gadget_angles(g)
+
+
+def test_an_angle_of_pi_leaves_no_gadget():
+    g = _layer(2, [(Fraction(1), [0, 1], ['a'], [])])
+    h = g.copy()
+    assert normalize_gadget_angles(h)
+    assert not phase_polynomial(h)[1] and [h.phase(z) for z in _read_spiders(h)] == [1, 1]
+    assert _same_for_all_outcomes(g, h)
+
+
+def test_outcomes_on_the_leaf_stay_on_the_leaf():
+    g = _layer(2, [(Fraction(3, 2), [0, 1], [], ['c'])])
+    h = g.copy()
+    assert normalize_gadget_angles(h)
+    (_hub, (leaf,)), = phase_polynomial(h)[1]
+    assert {v.name for v in h.phase(leaf).free_vars()} == {'c'} and _same_for_all_outcomes(g, h)
+
+
+def test_a_circuit_in_gpf_stays_in_gpf_with_normalized_angles():
+    c = zx.Circuit(3)
+    for gate in [("T", 0), ("CNOT", 0, 1), ("T", 1), ("Z", 1), ("CNOT", 1, 2), ("S", 2), ("Z", 2), ("T", 2)]:
+        c.add_gate(*gate)
+    d = to_gpf(c.to_graph())
+    h = d.copy()
+    assert normalize_gadget_angles(h)
+    assert is_gpf(h) and zx.compare_tensors(d, h, preserve_scalar=False)
+
+
+def _two_t_gates():
+    # T on qubit 0 and T^dag on the parity of qubits 0 and 1, from |+>|+>: two gadgets after reduce_gpf
+    c = zx.Circuit(2)
+    for q in range(2):
+        c.add_gate("HAD", q)
+    c.add_gate("T", 0)
+    c.add_gate("CNOT", 0, 1)
+    c.add_gate("T", 1, adjoint=True)
+    c.add_gate("CNOT", 0, 1)
+    g = c.to_graph()
+    g.apply_state('00')
+    return reduce_gpf(g, gadgets=False).to_graph()
+
+
+def test_opened_leaves_leave_a_clifford_diagram_with_one_output_per_leaf():
+    g = _two_t_gates()
+    n = sum(1 for v in g.vertices() if is_leaf(g, v))
+    h, new = open_leaves(g)
+    assert n == 2 and len(new) == n and list(h.outputs()) == list(g.outputs()) + new
+    assert all(Fraction(h.phase(v)).denominator <= 2 for v in h.vertices())
+
+
+def test_plugging_the_leaves_back_gives_the_diagram():
+    g = _two_t_gates()
+    leaves = sorted(v for v in g.vertices() if is_leaf(g, v))
+    h, _new = open_leaves(g)
+    t = h.to_tensor(preserve_scalar=True)               # outputs in order: the old ones, then the new ones
+    for leaf in reversed(leaves):                       # the last output with <0| + e^(i a pi)<1|
+        t = np.tensordot(t, np.array([1, cmath.exp(1j * np.pi * float(g.phase(leaf)))]), axes=([t.ndim - 1], [0]))
+    assert zx.compare_tensors(t, g.to_tensor(preserve_scalar=True), preserve_scalar=False)
+
+
+def test_a_z_on_an_opened_wire_is_a_pi_on_the_spiders_its_hub_reads():
+    g = _two_t_gates()
+    h, (b0, _b1) = open_leaves(g)
+    (hub,) = list(h.neighbors(b0))
+    with_z = h.clone()
+    with_z.remove_edge(with_z.edge(hub, b0))
+    z = with_z.add_vertex(VertexType.Z, phase=1)
+    with_z.add_edge((hub, z))
+    with_z.add_edge((z, b0))
+    moved = h.clone()
+    for v in h.neighbors(hub):
+        if h.type(v) == VertexType.Z:
+            moved.add_to_phase(v, 1)
+    assert same_map(with_z, moved)
+    assert not same_map(with_z, h)
+
+
+def test_hubs_that_are_not_of_gpf_shape_are_left_alone():
+    # two leaves on one hub: the hub fixes only the parity of the reads and the other leaf
+    g = _layer(2, [(Fraction(5, 4), [0, 1], [], [])])
+    (hub,) = [v for v in g.vertices() if g.type(v) == VertexType.X and g.row(v) == 5]
+    extra = g.add_vertex(VertexType.Z, 7, 7, Fraction(5, 4))
+    g.set_vdata(extra, GPF_ROLE_KEY, LEAF)
+    g.add_edge((hub, extra))
+    h = g.copy()
+    assert not normalize_gadget_angles(h) and _same_for_all_outcomes(g, h)
+    # a Hadamard edge from the hub to a spider it reads
+    g = _layer(2, [(Fraction(5, 4), [0], [], [])])
+    (hub,) = [v for v in g.vertices() if g.type(v) == VertexType.X and g.row(v) == 5]
+    z = next(w for w in g.neighbors(hub) if not is_leaf(g, w))
+    g.remove_edge(g.edge(hub, z))
+    g.add_edge((hub, z), EdgeType.HADAMARD)
+    assert not normalize_gadget_angles(g.copy())

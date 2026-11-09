@@ -23,12 +23,14 @@ data, ASAP scheduling, ``time_slice``):
   program graph as a valid ZX-diagram;
 * :mod:`~zxqec.spacetime.drawing` -- :func:`draw_program` (2D, time axis,
   block shading), :func:`draw_graph` (the same for any diagram), :func:`draw_slice` /
-  :func:`draw_program_slices` (one time step of the 2+1D view, flat) and :func:`draw_program_3d` / :func:`draw_graph_3d` (2D space
+  :func:`draw_program_slices` (one time step of the 2+1D view, flat), :func:`draw_stage_layout` (one stage
+  flat on the chip) and :func:`draw_program_3d` / :func:`draw_graph_3d` (2D space
   + 1D time) with matplotlib, for scripts and static figures; :func:`draw_level_3d`
   for the program as a level rewrites it;
 * :mod:`~zxqec.spacetime.relax` -- :func:`relax_layout`, :func:`draw_relaxed` and
   :func:`draw_relaxed_3d`: a diagram laid out where a physical energy is lowest
   (Kamada-Kawai springs or a force simulation, with ``networkx``), no coordinates given;
+  :func:`relaxed_topology` makes such a layout a :class:`Topology` for the qubits;
 * :mod:`~zxqec.spacetime.web` -- the same views as interactive JavaScript
   widgets for notebooks (:func:`draw_web`, :func:`draw_program_web`),
   built on PyZX's d3 and three.js viewers;
@@ -41,23 +43,24 @@ from .subdiagram import (
     LOGICAL_QUBIT_KEY, STAGE_KEY, get_logical_qubit, get_stage, induced_subdiagram,
     set_logical_qubit, set_stage, shift_timesteps,
 )
-from .drawing import (VIEWS, draw_graph, draw_graph_3d, draw_level_3d, draw_program, draw_program_3d,
-                      draw_program_slices, draw_program_views, draw_slice, draw_slices, level_layout_3d,
+from .drawing import (VIEWS, draw_checks, draw_graph, draw_graph_3d, draw_level_3d, draw_program, draw_program_3d,
+                      draw_program_slices, draw_program_views, draw_slice, draw_slices, draw_stage_layout,
+                      block_layout_3d, block_spans, draw_block_3d, draw_blocks_3d, level_layout_3d, save_panels,
                       slice_vertices)
 from .topology import Topology
 from .web import draw_program_web, draw_web
 from .levels_view import LevelsView, LevelsView3D, view_levels, view_levels_3d
-from .relax import RELAX_METHODS, SHADE_COLORS, draw_relaxed, draw_relaxed_3d, relax_layout
+from .relax import RELAX_METHODS, SHADE_COLORS, draw_relaxed, draw_relaxed_3d, relax_layout, relaxed_topology
 
 __all__ = [
     'Topology',
     'STAGE_KEY', 'LOGICAL_QUBIT_KEY',
     'get_stage', 'set_stage', 'get_logical_qubit', 'set_logical_qubit',
     'shift_timesteps', 'induced_subdiagram',
-    'draw_program', 'draw_graph', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views', 'VIEWS',
-    'slice_vertices', 'draw_slice', 'draw_slices', 'draw_program_slices',
-    'draw_level_3d', 'level_layout_3d',
+    'draw_program', 'draw_graph', 'draw_checks', 'draw_program_3d', 'draw_graph_3d', 'draw_program_views', 'VIEWS',
+    'slice_vertices', 'draw_slice', 'draw_slices', 'draw_program_slices', 'draw_stage_layout',
+    'draw_level_3d', 'level_layout_3d', 'draw_block_3d', 'block_layout_3d', 'draw_blocks_3d', 'block_spans', 'save_panels',
     'draw_web', 'draw_program_web',
     'view_levels', 'LevelsView', 'view_levels_3d', 'LevelsView3D',
-    'relax_layout', 'draw_relaxed', 'draw_relaxed_3d', 'RELAX_METHODS', 'SHADE_COLORS',
+    'relax_layout', 'draw_relaxed', 'draw_relaxed_3d', 'relaxed_topology', 'RELAX_METHODS', 'SHADE_COLORS',
 ]

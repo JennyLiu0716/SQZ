@@ -37,30 +37,34 @@
 * :func:`copy_leaf` -- the copy rule for a spider with one leg whose phase is a
   measurement result; :func:`thesis_notation`, :func:`copy_and_fuse` and
   :func:`remove_identities` -- the steps of a derivation by hand, made of single
-  rules (also level-up rewrites by those names).
+  rules (also level-up rewrites by those names); :func:`phase_gadgets` -- the
+  non-Pauli phases on gadgets, drawn along the wires; :func:`x_z_normal_form` --
+  the normal form with the colours swapped.
 """
 
-from .gadgets import phase_polynomial, simplify_gadgets
+from .gadgets import normalize_gadget_angles, open_leaves, phase_polynomial, simplify_gadgets
 from .hadamard import (BOUNDARY_HADAMARD_KEY, has_boundary_hadamard, push_hadamards_to_boundary,
                        restore_boundary_hadamards)
-from .matrix import SplitMatrix, apply_matrix, change_variables, reduce_rows, split_matrix
+from .matrix import SplitMatrix, apply_matrix, change_variables, one_spider_per_outcome, reduce_rows, split_matrix
 from .normal_form import GPF_ROLE_KEY, LEAF, is_gpf, is_leaf, is_stem, layout_gpf, to_gpf, to_gpf_steps
 from .reduce import (GPFResult, boolean_variables, consistent_assignments, constraint_system, detector_rank,
                      equal_for_all_assignments, evaluate_phase, phases_modulo, reduce_gpf, reduce_modulo,
                      same_map, sample_consistent_assignment, unsatisfiable)
 from .report import Measurement, MeasurementReport, measurement_report
-from .rules import copy_and_fuse, copy_leaf, remove_identities, thesis_notation
+from .rules import (copy_and_fuse, copy_leaf, phase_gadgets, remove_identities, thesis_notation, unfuse_outcomes,
+                    x_z_normal_form)
 from .terms import Decomposition, Part, Piece, Term, decompose_terms
 
 __all__ = [
     'to_gpf', 'to_gpf_steps', 'is_gpf', 'is_leaf', 'is_stem', 'layout_gpf', 'GPF_ROLE_KEY', 'LEAF',
-    'SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'change_variables',
+    'SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'change_variables', 'one_spider_per_outcome',
     'reduce_gpf', 'GPFResult', 'equal_for_all_assignments', 'boolean_variables', 'evaluate_phase',
     'sample_consistent_assignment', 'consistent_assignments', 'same_map', 'constraint_system',
     'detector_rank', 'unsatisfiable', 'reduce_modulo', 'phases_modulo',
     'measurement_report', 'MeasurementReport', 'Measurement',
     'push_hadamards_to_boundary', 'restore_boundary_hadamards', 'has_boundary_hadamard',
-    'BOUNDARY_HADAMARD_KEY', 'simplify_gadgets', 'phase_polynomial',
+    'BOUNDARY_HADAMARD_KEY', 'simplify_gadgets', 'phase_polynomial', 'normalize_gadget_angles', 'open_leaves',
     'decompose_terms', 'Decomposition', 'Part', 'Term', 'Piece', 'copy_leaf',
-    'thesis_notation', 'copy_and_fuse', 'remove_identities',
+    'thesis_notation', 'copy_and_fuse', 'remove_identities', 'phase_gadgets', 'x_z_normal_form',
+    'unfuse_outcomes',
 ]

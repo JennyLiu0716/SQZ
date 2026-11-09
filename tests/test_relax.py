@@ -140,3 +140,38 @@ def test_shaded_drawings_and_views():
     with pytest.raises(ValueError):
         draw_relaxed(check_diagram(steane), shade='Y')
     plt.close('all')
+
+
+def test_a_topology_from_the_normal_form_of_the_steane_codes_plus():
+    # the logical |+> of the Steane code (paper, Section 2): its X-Z normal form has a red spider for each
+    # of the three checks; laid out from its edges, the qubits form the code's triangle of three faces
+    from zxqec.codes import check_diagram
+    from zxqec.gpf import equal_for_all_assignments, x_z_normal_form
+    from zxqec.qprogram import QProgram
+    from zxqec.spacetime import Topology, relaxed_topology
+    gates = [CNOT(3, 5), CNOT(3, 6), HAD(0), HAD(1), HAD(2)]
+    for s, check in zip((0, 1, 2), ((0, 3, 4, 5), (1, 3, 4, 6), (2, 4, 5, 6))):
+        gates += [CNOT(s, t) for t in check if t != s]
+    c = Circuit(7)
+    for g in gates:
+        c.add_gate(g)
+    p = QProgram(7, initial_states={q: '+' if q == 3 else '0' for q in range(7)})
+    p.add_circuit(c)
+    xz, _ = x_z_normal_form(p.quantum_graph())
+    assert equal_for_all_assignments(p.quantum_graph(), xz)
+    t = relaxed_topology(xz)
+    assert isinstance(t, Topology) and sorted(t) == list(range(7))
+    assert sorted(t.edge_list()) == [(0, 3), (0, 5), (1, 3), (1, 6), (2, 5), (2, 6), (3, 4), (4, 5), (4, 6)]
+    on_chip = QProgram(7, initial_states={q: '+' if q == 3 else '0' for q in range(7)}, topology=t)
+    on_chip.add_circuit(c)
+    assert on_chip.code_at(0).same_code_as(p.code_at(0))
+    import matplotlib
+    matplotlib.use('Agg')
+    from zxqec.spacetime import draw_program_3d
+    ax = draw_program_3d(on_chip, show_phases=False, space_ticks=False).axes[0]
+    assert not any(t.get_text() for t in ax.get_xticklabels() + ax.get_yticklabels())
+    assert any(t.get_text() for t in draw_program_3d(on_chip, show_phases=False).axes[0].get_xticklabels())
+    # a check on two qubits joins them directly; an output that is not on a spider of its own is refused
+    assert sorted(relaxed_topology(check_diagram([[1, 1, 0], [0, 1, 1]])).edge_list()) == [(0, 1), (1, 2)]
+    with pytest.raises(ValueError):
+        relaxed_topology(Circuit(2).to_graph())

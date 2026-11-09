@@ -51,6 +51,47 @@ def test_a_measurement_is_not_gathered_past_a_gate_that_reads_its_bit():
     assert split_by_gate_type(p).kinds == ('non-Clifford gates', 'Clifford')
 
 
+_QASM = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncreg c[1];\n'
+
+
+def _qasm_program(text):
+    p = QProgram(2, bits=1, initial_states={1: '0'})
+    p.add_circuit(Circuit.from_qasm(_QASM + text), name='a')
+    return p
+
+
+def test_an_openqasm_pauli_correction_is_clifford():
+    # before, split_by_gate_type raised ValueError: the phase of a ConditionalGate is symbolic
+    p = _qasm_program('h q[1];\nmeasure q[1] -> c[0];\nif(c==1) z q[0];\n')
+    assert split_by_gate_type(p).kinds == ('Clifford',)
+    r = check_distance(p, distance=False)
+    assert r.attempts == [] and r.passes is True
+
+
+def test_an_openqasm_s_correction_is_clifford_and_a_t_correction_is_not():
+    # a T injection on qubit 1 with its S correction on qubit 0: the injection is a non-Clifford initialisation,
+    # the correction Clifford, as ParityControlled('S', 0, ['c[0]']) is
+    p = _qasm_program('h q[1]; t q[1];\ncx q[0], q[1];\nmeasure q[1] -> c[0];\nif(c==1) s q[0];\n')
+    split = split_by_gate_type(p)
+    assert split.kinds == ('non-Clifford initialisation', 'Clifford')
+    assert [type(g).__name__ for g in split.program.stage(1).circuit.gates] == ['CNOT', 'Measurement', 'ConditionalGate']
+    a, b = p.quantum_graph(), split.program.quantum_graph()
+    names = sorted(set(boolean_variables(a)) | set(boolean_variables(b)))
+    assert equal_for_all_assignments(a, b, names, [])
+    r = check_distance(p, distance=False)
+    assert r.attempts == [] and r.not_counted == [0]
+
+    p = _qasm_program('h q[1];\nmeasure q[1] -> c[0];\nif(c==1) t q[0];\n')
+    r = check_distance(p, distance=False)
+    assert r.split.kinds == ('Clifford', 'non-Clifford gates') and str(r.split.program.stage(1)) == 'a: if(c==1) T on 0'
+    assert [(a.first, a.last, a.passes) for a in r.attempts] == [(1, 1, False)]       # T X T^dag when c[0] = 1
+
+
+def test_a_measurement_is_not_gathered_past_an_openqasm_correction_that_reads_its_bit():
+    p = _qasm_program('t q[0];\nif(c==1) z q[1];\nh q[0];\nmeasure q[0] -> c[0];\n')
+    assert split_by_gate_type(p).kinds == ('non-Clifford gates', 'Clifford')
+
+
 def test_stages_graph_is_the_block_of_those_stages():
     p = _mixed_program()
     level = p.group_stages([(1, 2, 'b and c')])

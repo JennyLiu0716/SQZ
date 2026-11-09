@@ -16,7 +16,9 @@
 
 * :func:`code_of` -- the stabilizer code a Clifford isometry encodes into, read
   off its generalized parity form, with outcome-dependent signs and canonical
-  logical operators (:class:`StabilizerCode`);
+  logical operators (:class:`StabilizerCode`); :func:`code_layers` -- what it
+  reads (:class:`CodeLayers`: the reduced diagram, its rows ``L`` and ``M``, named
+  and drawn); :func:`stabilizes` -- a Pauli string checked on a diagram itself;
 * :class:`PauliString` -- a Pauli operator with a possibly symbolic sign;
 * :func:`iap_normal_form` -- a Clifford isometry (such as a code's ideal
   encoder) in isometry affine-with-phases normal form (:class:`IAPNormalForm`),
@@ -27,11 +29,13 @@
 """
 
 from .checks import check_diagram, surface_code_checks
-from .code import NotACodeError, OutcomeDependentCodeError, StabilizerCode, code_of
+from .code import (CodeLayers, NotACodeError, OutcomeDependentCodeError, StabilizerCode, code_layers, code_of,
+                   stabilizes)
 from .iapnf import APForm, IAPNormalForm, iap_normal_form, reduced_ap_form
 from .logical import Branch, LogicalAction, glue, logical_action
 from .pauli import PauliString, phase_sum
 
-__all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of', 'PauliString', 'phase_sum',
+__all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of', 'code_layers', 'CodeLayers',
+           'stabilizes', 'PauliString', 'phase_sum',
            'logical_action', 'LogicalAction', 'Branch', 'glue', 'iap_normal_form', 'IAPNormalForm',
            'reduced_ap_form', 'APForm', 'check_diagram', 'surface_code_checks']

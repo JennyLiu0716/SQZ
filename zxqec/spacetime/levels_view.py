@@ -58,7 +58,8 @@ shown as it starts (use an interactive matplotlib backend to move or drag).
 :func:`view_levels_3d` is the same window with the program in 3D, as
 :func:`~zxqec.spacetime.draw_program_3d` draws it, the blocks of a level as
 slabs; it is turned with the mouse or the view buttons, and a block cut out of
-the program is drawn in 3D on the right too. The middle picture is the program
+the program is drawn in 3D on the right too (with ``block_3d=True`` a rewritten
+block as well, as :func:`~zxqec.spacetime.draw_block_3d` draws it). The middle picture is the program
 as the level rewrites it in 3D (:func:`~zxqec.spacetime.draw_level_3d`): what
 has a place in space-time is drawn there, and the spiders of a rewritten block,
 which have none, are laid out between the ends of its wires.
@@ -125,7 +126,7 @@ class LevelsView:
 
     def __init__(self, program: 'QProgram', level: int, index: int, figsize: tuple[float, float],
                  program_figsize: tuple[float, float], block_figsize: tuple[float, float],
-                 level_figsize: tuple[float, float]) -> None:
+                 level_figsize: tuple[float, float], controls: bool = True) -> None:
         import matplotlib.pyplot as plt
         from matplotlib.widgets import Button, CheckButtons, Slider
 
@@ -133,6 +134,7 @@ class LevelsView:
         self.level = level
         self.index = index
         self.plain = False
+        self.controls = controls
         self._program_figsize = program_figsize
         self._block_figsize = block_figsize
         self._level_figsize = level_figsize
@@ -150,19 +152,22 @@ class LevelsView:
         self.fig = plt.figure(figsize=figsize)
         self._make_axes()
         n = program.levels.num_levels
-        self.slider = Slider(self.fig.add_axes([0.07, 0.04, 0.30, 0.03]), 'level', 0, max(n - 1, 1),
-                             valinit=level, valstep=1)
-        self.button_prev = Button(self.fig.add_axes([0.42, 0.025, 0.08, 0.05]), '< block')
-        self.button_next = Button(self.fig.add_axes([0.51, 0.025, 0.08, 0.05]), 'block >')
-        self.check = CheckButtons(self.fig.add_axes([0.61, 0.015, 0.13, 0.07]), ['plain diagram'], [False])
-        self.button_spread = Button(self.fig.add_axes([0.75, 0.025, 0.11, 0.05]), 'spread out block')
-        self.button_reset = Button(self.fig.add_axes([0.87, 0.025, 0.11, 0.05]), 'reset positions')
-        self.slider.on_changed(lambda v: self.set_level(int(round(v))))
-        self.button_prev.on_clicked(lambda _e: self.set_block(self.index - 1))
-        self.button_next.on_clicked(lambda _e: self.set_block(self.index + 1))
-        self.check.on_clicked(lambda _l: self.set_plain(self.check.get_status()[0]))
-        self.button_spread.on_clicked(lambda _e: self.spread_block())
-        self.button_reset.on_clicked(lambda _e: self.reset_positions())
+        self.slider: Any = None
+        self.check: Any = None
+        if controls:
+            self.slider = Slider(self.fig.add_axes([0.07, 0.04, 0.30, 0.03]), 'level', 0, max(n - 1, 1),
+                                 valinit=level, valstep=1)
+            self.button_prev = Button(self.fig.add_axes([0.42, 0.025, 0.08, 0.05]), '< block')
+            self.button_next = Button(self.fig.add_axes([0.51, 0.025, 0.08, 0.05]), 'block >')
+            self.check = CheckButtons(self.fig.add_axes([0.61, 0.015, 0.13, 0.07]), ['plain diagram'], [False])
+            self.button_spread = Button(self.fig.add_axes([0.75, 0.025, 0.11, 0.05]), 'spread out block')
+            self.button_reset = Button(self.fig.add_axes([0.87, 0.025, 0.11, 0.05]), 'reset positions')
+            self.slider.on_changed(lambda v: self.set_level(int(round(v))))
+            self.button_prev.on_clicked(lambda _e: self.set_block(self.index - 1))
+            self.button_next.on_clicked(lambda _e: self.set_block(self.index + 1))
+            self.check.on_clicked(lambda _l: self.set_plain(self.check.get_status()[0]))
+            self.button_spread.on_clicked(lambda _e: self.spread_block())
+            self.button_reset.on_clicked(lambda _e: self.reset_positions())
         self.fig.canvas.mpl_connect('key_press_event', self._key)
         self.fig.canvas.mpl_connect('button_press_event', self._press)
         self.fig.canvas.mpl_connect('motion_notify_event', self._motion)
@@ -170,10 +175,13 @@ class LevelsView:
         self.redraw()
 
     def _make_axes(self) -> None:
-        self.ax_program = self.fig.add_axes([0.005, 0.36, 0.40, 0.58])
-        self.ax_level = self.fig.add_axes([0.41, 0.36, 0.33, 0.58])
-        self.ax_block = self.fig.add_axes([0.75, 0.36, 0.245, 0.58])
-        self.ax_text = self.fig.add_axes([0.02, 0.11, 0.96, 0.23])
+        # without the controls, the pictures and the text move down into the controls' row
+        bottom, height, text = (0.36, 0.58, [0.02, 0.11, 0.96, 0.23]) if self.controls else \
+            (0.27, 0.67, [0.02, 0.02, 0.96, 0.23])
+        self.ax_program = self.fig.add_axes([0.005, bottom, 0.40, height])
+        self.ax_level = self.fig.add_axes([0.41, bottom, 0.33, height])
+        self.ax_block = self.fig.add_axes([0.75, bottom, 0.245, height])
+        self.ax_text = self.fig.add_axes(text)
 
     # -- moving between blocks ---------------------------------------------
 
@@ -186,7 +194,7 @@ class LevelsView:
         self.level = level
         blocks = self.program.levels.blocks(level)
         self.index = next(k for k, b in enumerate(blocks) if first in b.stages)
-        if int(round(self.slider.val)) != level:
+        if self.slider is not None and int(round(self.slider.val)) != level:
             self.slider.set_val(level)
         self.redraw()
 
@@ -199,7 +207,7 @@ class LevelsView:
     def set_plain(self, plain: bool) -> None:
         if plain != self.plain:
             self.plain = plain
-            if self.check.get_status()[0] != plain:      # set from code: tick the box too
+            if self.check is not None and self.check.get_status()[0] != plain:      # set from code: tick the box too
                 self.check.set_active(0)
             self.redraw()
 
@@ -398,9 +406,11 @@ class LevelsView:
                 x0, x1 = pic.column(lo - 0.5), pic.column(hi + 0.5)
                 self.ax_program.add_patch(Rectangle((x0 + 3, top + 6), x1 - x0 - 6, bottom - top - 12,
                                                     fill=False, lw=1.2, ec='black', ls='--'))
-        self.ax_program.set_title("level {} of {}: block {} of {} outlined{} (drag a spider to move it)".format(
-            level, p.levels.num_levels - 1, index, p.levels.level_size(level),
-            ", the blocks it was made from dashed" if block.children else ""), fontsize=9)
+        made_from = (", the blocks it was made from dashed" if self.controls
+                     else ",\nthe blocks it was made from dashed") if block.children else ""
+        self.ax_program.set_title("level {} of {}: block {} of {} outlined{}{}".format(
+            level, p.levels.num_levels - 1, index, p.levels.level_size(level), made_from,
+            " (drag a spider to move it)" if self.controls else ""), fontsize=9)
 
     def _draw_level(self) -> None:
         from matplotlib.patches import Rectangle
@@ -416,8 +426,8 @@ class LevelsView:
             top, bottom = pic.rows
             x0, x1 = pic.column(span[0]), pic.column(span[1])
             ax.add_patch(Rectangle((x0, top), x1 - x0, bottom - top, fill=False, lw=2.2, ec='black'))
-        ax.set_title("level {}, every block after its rewrite: {} spiders{}".format(
-            self.level, rl.spiders, "\noutcomes modulo its {} detectors".format(len(rl.detectors))
+        ax.set_title("level {}, every block after its rewrite:{}{} spiders{}".format(
+            self.level, " " if self.controls else "\n", rl.spiders, "\noutcomes modulo its {} detectors".format(len(rl.detectors))
             if rl.detectors else ""), fontsize=9)
 
     def _draw_block(self) -> None:
@@ -434,7 +444,7 @@ class LevelsView:
         else:
             n = len(self.program.reduced_block(self.level, self.index).detectors)
             what = "after rewrite " + block.rewrite + ("\noutcomes modulo its {} detectors".format(n) if n else "")
-        return "{}: {}".format(block, what)
+        return "{}:{}{}".format(block, " " if self.controls else "\n", what)     # a still figure: narrower
 
     def describe(self) -> str:
         p, level, index = self.program, self.level, self.index
@@ -480,16 +490,19 @@ def _draw_pyzx(g: Any, figsize: tuple[float, float]) -> Any:
 
 def view_levels(program: 'QProgram', level: int | None = None, index: int = 0, *,
                 figsize: tuple[float, float] = (18, 8), program_figsize: tuple[float, float] = (12, 5),
-                level_figsize: tuple[float, float] = (10, 5), block_figsize: tuple[float, float] = (6, 5)) -> Any:
+                level_figsize: tuple[float, float] = (10, 5), block_figsize: tuple[float, float] = (6, 5),
+                controls: bool = True) -> Any:
     """Open the levels of ``program`` in a window (see the module docstring); returns the figure.
 
     ``level`` (default: the highest) and ``index`` choose the block shown first.
     The figure's ``levels_view`` attribute is the :class:`LevelsView`, whose
     ``set_level``, ``set_block``, ``set_plain``, ``move_spider`` and
-    ``reset_positions`` act on it from code.
+    ``reset_positions`` act on it from code. ``controls=False`` leaves out the slider
+    and the buttons, for a still figure (a paper, a saved image): the pictures and the
+    text take their place; the methods still move the view.
     """
     level = _first_level(program, level, index)
-    view = LevelsView(program, level, index, figsize, program_figsize, block_figsize, level_figsize)
+    view = LevelsView(program, level, index, figsize, program_figsize, block_figsize, level_figsize, controls)
     view.fig.levels_view = view
     return view.fig
 
@@ -509,8 +522,15 @@ class LevelsView3D(LevelsView):
 
     def __init__(self, program: 'QProgram', level: int, index: int, figsize: tuple[float, float],
                  block_figsize: tuple[float, float], level_figsize: tuple[float, float],
-                 view: str | tuple[float, float], show_phases: bool) -> None:
+                 view: str | tuple[float, float], show_phases: bool, controls: bool = True,
+                 block_3d: bool = False, by_outcomes: bool = False, phases_beside: bool = False,
+                 hadamard_boxes: bool = False, crossing_wires: bool = False) -> None:
         self._view = view
+        self._crossing_wires = crossing_wires    # a permutation as crossing wires only (level_layout_3d)
+        self._hadamard_boxes = hadamard_boxes    # Hadamards as yellow boxes (draw_graph_3d)
+        self._phases_beside = phases_beside      # phases beside their spiders on the screen (draw_graph_3d)
+        self._by_outcomes = by_outcomes          # combined checks over their outcomes' qubits (level_layout_3d)
+        self._block_3d = block_3d                # a rewritten block in 3D too, as draw_block_3d draws it
         self._show_phases = show_phases
         self._extent: Any = None                 # x and y ranges of the slabs
         self._slabs: list[Any] = []              # the artists of the level's slabs, replaced on every redraw
@@ -518,7 +538,10 @@ class LevelsView3D(LevelsView):
         self._level_drawn: int | None = None     # the level the middle picture shows
         self._level_extent: Any = None
         self._level_slabs: list[Any] = []
-        super().__init__(program, level, index, figsize, (0, 0), block_figsize, level_figsize)
+        super().__init__(program, level, index, figsize, (0, 0), block_figsize, level_figsize, controls)
+        if controls and block_3d:                # no 2D picture left to spread out or drag
+            for button in (self.button_spread, self.button_reset):
+                button.ax.set_visible(False)
 
     def _make_axes(self) -> None:
         import mpl_toolkits.mplot3d  # noqa: F401  (registers the 3d projection)
@@ -526,14 +549,18 @@ class LevelsView3D(LevelsView):
 
         from .drawing import VIEWS
 
-        self.ax_program = self.fig.add_axes([0.0, 0.40, 0.40, 0.53], projection='3d')
-        self.ax_level = self.fig.add_axes([0.41, 0.40, 0.33, 0.53], projection='3d')
+        # without the controls (and the view buttons), the pictures and the text move down into their rows,
+        # leaving room above for titles of two lines
+        bottom, height, text = (0.40, 0.53, [0.02, 0.11, 0.96, 0.23]) if self.controls else \
+            (0.20, 0.66, [0.02, 0.01, 0.96, 0.17])
+        self.ax_program = self.fig.add_axes([0.0, bottom, 0.40, height], projection='3d')
+        self.ax_level = self.fig.add_axes([0.41, bottom, 0.33, height], projection='3d')
         self.ax_level.shareview(self.ax_program)   # the program and the level turn together
-        self.ax_block = self.fig.add_axes([0.75, 0.40, 0.245, 0.53])
-        self.ax_block3d = self.fig.add_axes([0.75, 0.40, 0.245, 0.53], projection='3d')
-        self.ax_text = self.fig.add_axes([0.02, 0.11, 0.96, 0.23])
+        self.ax_block = self.fig.add_axes([0.75, bottom, 0.245, height])
+        self.ax_block3d = self.fig.add_axes([0.75, bottom, 0.245, height], projection='3d')
+        self.ax_text = self.fig.add_axes(text)
         self.view_buttons = []
-        for i, name in enumerate(VIEWS):
+        for i, name in enumerate(VIEWS if self.controls else ()):
             button = Button(self.fig.add_axes([0.03 + 0.09 * i, 0.355, 0.08, 0.035]), name)
             button.on_clicked(lambda _e, name=name: self.set_view(name))
             self.view_buttons.append(button)
@@ -561,7 +588,8 @@ class LevelsView3D(LevelsView):
         p, level, index, ax = self.program, self.level, self.index, self.ax_program
         if self._extent is None:                 # the program is drawn once; only the slabs change
             g = p.quantum_graph()
-            draw_graph_3d(g, p.topology, ax=ax, view=self._view, show_phases=self._show_phases, finish=False)
+            draw_graph_3d(g, p.topology, ax=ax, view=self._view, show_phases=self._show_phases, finish=False,
+                          phases_beside=self._phases_beside, hadamard_boxes=self._hadamard_boxes)
             self._extent = _space_extent(_positions(g, p.topology))
         for artist in self._slabs:
             artist.remove()
@@ -575,9 +603,10 @@ class LevelsView3D(LevelsView):
             for lo, hi in self._ranges(child):
                 self._slabs += _slab(ax, (x0 + 0.15, x1 - 0.15), (y0 + 0.15, y1 - 0.15), (lo - 0.4, hi + 0.4),
                                      'black', face_alpha=0, linewidth=1.2, linestyle='--', line_alpha=1.0)
-        ax.set_title("level {} of {}: block {} of {} outlined{} (drag to turn it)".format(
+        ax.set_title("level {} of {}: block {} of {} outlined{}{}".format(
             level, p.levels.num_levels - 1, index, p.levels.level_size(level),
-            ", the blocks it was made from dashed" if block.children else ""), fontsize=9)
+            ("," if self.controls else "\n") + " the blocks it was made from dashed" if block.children else "",
+            " (drag to turn it)" if self.controls else ""), fontsize=9)
 
     def _draw_level(self) -> None:
         from pyzx.utils import VertexType
@@ -587,19 +616,24 @@ class LevelsView3D(LevelsView):
 
         p, level, ax = self.program, self.level, self.ax_level
         if self._level_drawn != level:           # drawn once per level; only the outline changes between blocks
-            g, pos, detectors = level_layout_3d(p, level)
+            g, pos, detectors = level_layout_3d(p, level, self._by_outcomes, self._crossing_wires)
             ax.clear()
             draw_graph_3d(phases_modulo(g, detectors), p.topology, positions=pos, ax=ax,
                           view=(self.ax_program.elev, self.ax_program.azim), show_phases=self._show_phases,
+                          phases_beside=self._phases_beside, hadamard_boxes=self._hadamard_boxes,
                           finish=False)
             self._level_extent = _space_extent(pos)
             self._level_slabs = _block_slabs(ax, *self._level_extent, _block_tick_ranges(p, level))
             self._level_outline: list[Any] = []
             self._level_drawn = level
             n = sum(1 for v in g.vertices() if g.type(v) != VertexType.BOUNDARY)
-            ax.set_title("level {}, every block after its rewrite: {} spiders{}\n(a rewritten block's spiders "
-                         "between the ends of its wires)".format(level, n, ", outcomes modulo {} detectors".format(
-                             len(detectors)) if detectors else ""), fontsize=9)
+            modulo = ", outcomes modulo {} detectors".format(len(detectors)) if detectors else ""
+            if self.controls:
+                ax.set_title("level {}, every block after its rewrite: {} spiders{}\n(a rewritten block's spiders "
+                             "between the ends of its wires)".format(level, n, modulo), fontsize=9)
+            else:                                # a still figure: narrower, the caption explains the layout
+                ax.set_title("level {}, every block after its rewrite:\n{} spiders{}".format(level, n, modulo),
+                             fontsize=9)
         for artist in self._level_outline:
             artist.remove()
         (x0, x1), (y0, y1) = self._level_extent
@@ -609,28 +643,38 @@ class LevelsView3D(LevelsView):
                                          linewidth=2.2, line_alpha=1.0)
 
     def _draw_block(self) -> None:
-        from .drawing import draw_graph_3d
+        from .drawing import draw_block_3d, draw_graph_3d
 
         block = self.program.block(self.level, self.index)
         cut = self.plain or not block.rewrite    # a diagram cut out of the program has a place in space-time
-        self.ax_block.set_visible(not cut)
-        self.ax_block3d.set_visible(cut)
-        if not cut:
+        in_3d = cut or self._block_3d
+        self.ax_block.set_visible(not in_3d)
+        self.ax_block3d.set_visible(in_3d)
+        if not in_3d:
             super()._draw_block()                # a rewritten diagram has none: PyZX's drawing, as in 2D
             return
         ax = self.ax_block3d
         if ax.has_data():                        # keep the viewpoint the user turned it to
             self._block_view = (ax.elev, ax.azim)
         ax.clear()
-        draw_graph_3d(self.program.block_graph(self.level, self.index, classical=False), self.program.topology,
-                      ax=ax, view=self._block_view or self._view, show_phases=self._show_phases, finish=False)
+        kw = dict(ax=ax, view=self._block_view or self._view, show_phases=self._show_phases, finish=False,
+                  phases_beside=self._phases_beside, hadamard_boxes=self._hadamard_boxes)
+        turn = self._crossing_wires and not self.plain and \
+            all(self.program.stage(s).kind == 'permutation' for s in block.stages)
+        if cut and not turn:
+            draw_graph_3d(self.program.block_graph(self.level, self.index, classical=False), self.program.topology,
+                          **kw)
+        else:                                    # laid out between the ends of its wires, as in the middle
+            draw_block_3d(self.program, self.level, self.index, self._by_outcomes, self._crossing_wires, **kw)
         ax.set_title(self._block_title(), fontsize=9)
 
 
 def view_levels_3d(program: 'QProgram', level: int | None = None, index: int = 0, *,
                    figsize: tuple[float, float] = (18, 9), level_figsize: tuple[float, float] = (10, 5),
                    block_figsize: tuple[float, float] = (6, 5), view: str | tuple[float, float] = 'default',
-                   show_phases: bool = True) -> Any:
+                   show_phases: bool = True, controls: bool = True, block_3d: bool = False,
+                   by_outcomes: bool = False, phases_beside: bool = False, hadamard_boxes: bool = False,
+                   crossing_wires: bool = False) -> Any:
     """The levels window of :func:`view_levels` with the program in 3D (2D space, time upwards).
 
     On the left the program as :func:`~zxqec.spacetime.draw_program_3d` draws it,
@@ -646,8 +690,20 @@ def view_levels_3d(program: 'QProgram', level: int | None = None, index: int = 0
     too; a rewritten block has no place in space-time and is PyZX's drawing, as
     in :func:`view_levels`, with spiders to drag. The slider, block buttons,
     arrow keys, *spread out block* and *reset positions* work as there.
+    ``block_3d=True`` draws a rewritten block in 3D too, laid out as in the
+    middle picture (:func:`~zxqec.spacetime.draw_block_3d`); there is then
+    nothing to drag, and *spread out block* and *reset positions* are left out.
+    ``by_outcomes=True`` lays the 3D pictures of rewritten blocks out with that
+    option of :func:`~zxqec.spacetime.level_layout_3d`. ``phases_beside=True``
+    writes the phases beside their spiders (:func:`~zxqec.spacetime.draw_graph_3d`),
+    readable from above; ``hadamard_boxes=True`` draws Hadamards as yellow boxes;
+    ``crossing_wires=True`` draws a permutation as its wires alone, without
+    identity spiders, in the middle and on the right.
+    ``controls=False`` leaves out the slider and all buttons, the view buttons
+    too, for a still figure, as in :func:`view_levels`.
     """
     level = _first_level(program, level, index)
-    view3d = LevelsView3D(program, level, index, figsize, block_figsize, level_figsize, view, show_phases)
+    view3d = LevelsView3D(program, level, index, figsize, block_figsize, level_figsize, view, show_phases,
+                          controls, block_3d, by_outcomes, phases_beside, hadamard_boxes, crossing_wires)
     view3d.fig.levels_view = view3d
     return view3d.fig

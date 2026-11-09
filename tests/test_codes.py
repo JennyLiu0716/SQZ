@@ -75,6 +75,45 @@ def test_fold_transversal_h_returns_to_its_code_on_the_hardware():
     assert not p.code_at(4).same_code_as(start, by='label')      # though every qubit moved
 
 
+def test_fold_transversal_h_returns_with_the_same_logical_operators():
+    # back in the surface code by position, and its logical X and Z are the surface code's again
+    p = F.fold_transversal_h()
+    start = p.code_at(0)
+    assert p.code_at(4).same_logicals_as(start, by='position') is True
+    assert p.code_at(4).same_logicals_as(start, by='label') is None   # not the same code by label
+    assert p.code_at(1).same_logicals_as(start, by='position') is None
+
+
+def test_matching_by_position_can_swap_two_logical_qubits():
+    # the [[4,2,2]] code with X1 = XXII, X2 = XIXI: moving qubits 1 and 2 keeps the code but swaps X1 and X2
+    from zxqec.codes import StabilizerCode
+
+    def code(positions):
+        return StabilizerCode(qubits=(0, 1, 2, 3), hadamard=(0, 0, 0, 0), sx=np.array([[1, 1, 1, 1]], np.uint8),
+                              sx_signs=[0], sz=np.array([[1, 1, 1, 1]], np.uint8), sz_signs=[0],
+                              logical_x=[PauliString.from_str('XXII'), PauliString.from_str('XIXI')],
+                              logical_z=[PauliString.from_str('ZIZI'), PauliString.from_str('ZZII')],
+                              positions=positions)
+    before, moved = code((0, 1, 2, 3)), code((0, 2, 1, 3))
+    assert moved.same_code_as(before, by='position') and moved.same_logicals_as(before, by='label')
+    assert moved.same_logicals_as(before, by='position') is False
+
+
+def test_summary_checks_that_a_gate_ends_with_the_logical_operators_it_started_with():
+    p = F.fold_transversal_h()
+    l1 = p.group_stages([(1, 1, 'transversal H', 'transversal gate'), (2, 3, 'round in code 2'),
+                         (4, 4, 'rotate', 'logical gate')], one_level=True)
+    l2 = p.level_up(l1, 1, 3, 'fold-transversal H', 'logical gate')
+
+    def lines(level, index):
+        return [(ok, text) for ok, text in p.summary(level).blocks[index].checks if 'started in' in text]
+    assert lines(l1, 1) == []                                     # the Hadamards change the code
+    assert lines(l1, 3) == [(True, 'ends in the code it started in, with the same logical X and Z '
+                                   '(qubits matched by label)')]  # the turn moves no state
+    assert lines(l2, 1) == [(True, 'ends in the code it started in, with the same logical X and Z '
+                                   '(qubits matched by their place on the chip)')]
+
+
 def test_pauli_string_roundtrip():
     p = PauliString.from_str('-XYZI')
     assert str(p) == '-XYZI' and p.weight == 3 and p.support == (0, 1, 2)

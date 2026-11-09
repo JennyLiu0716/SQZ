@@ -122,6 +122,35 @@ def test_reduce_gpf_on_random_diagrams():
                                 res.to_graph().substitute_variables(a) if names else res.to_graph()), (phases, a)
 
 
+def test_reduce_gpf_leaves_the_free_rows_in_reduced_echelon_form():
+    # the promise of reduce_gpf's docstring, which code_of relies on: in each layer, every free row
+    # (no input, gadget or non-Pauli phase on it) is non-empty and has a leading 1 in a column where
+    # every other row of the layer, free or not, has a 0; so the free rows are independent and
+    # one more Gauss-Jordan pass changes nothing
+    import copy
+    from zxqec.gpf import reduce_rows, split_matrix
+    rng = random.Random(11)
+    checked = 0
+    for phases in ('none', 'pauli', 'boolean', 'mixed'):
+        for _ in range(100):
+            res = reduce_gpf(random_diagram(rng, phases))
+            if res.is_zero:
+                continue
+            checked += 1
+            for side in (VertexType.Z, VertexType.X):
+                m = split_matrix(res.graph, side)
+                ext = m.num_external
+                for i in m.free_rows():
+                    internal = m.entries[i][ext:]
+                    assert any(internal), (phases, side, "an empty free row")
+                    lead = ext + internal.index(1)
+                    assert not any(m.entries[j][lead] for j in range(len(m.entries)) if j != i), (phases, side)
+                again = copy.deepcopy(m)
+                reduce_rows(again)
+                assert again.entries == m.entries, (phases, side)
+    assert checked > 300
+
+
 def evaluate(poly, assignment):
     from zxqec.gpf import evaluate_phase
     return evaluate_phase(poly, assignment)

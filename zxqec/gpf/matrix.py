@@ -51,8 +51,8 @@ from pyzx.utils import VertexType, is_pauli
 
 from .normal_form import is_leaf, is_stem, layout_gpf
 
-__all__ = ['SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'change_variables', 'phase_mod2',
-           'is_zero_phase']
+__all__ = ['SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'change_variables', 'one_spider_per_outcome',
+           'phase_mod2', 'is_zero_phase']
 
 
 def phase_mod2(p: Any) -> Any:
@@ -180,6 +180,101 @@ def apply_matrix(g: BaseGraph[VT, ET], m: SplitMatrix) -> list[Any]:
             g.add_edge((r, c))
         g.set_phase(r, m.phases[i])
     return constraints
+
+
+def one_spider_per_outcome(g: BaseGraph[VT, ET]) -> list[Any]:
+    """Add free rows of each layer of the GPF diagram ``g`` to each other until each has as few outcomes as possible (in place).
+
+    A GPF diagram may write the checks of a syndrome round as sums: a spider
+    with phase ``c[5] + c[7] + c[8]`` joined to the qubits of three checks.
+    This is Gauss-Jordan elimination over the outcomes in the phases, with the
+    row operation of this module and free rows as sources, as in
+    :func:`reduce_rows`: each outcome in turn (in the order of their numbers)
+    is left on one free row and taken off the others. When the phases of the
+    free rows are independent sums of distinct outcomes, each row ends with a
+    single outcome, and that spider is joined to the qubits of the one check
+    measured to give it. Then every other row of the layer takes up the sum of
+    checks (the same row operation, checks as the sources) that leaves it the
+    fewest edges: a wire that the checks' sums bent across the grid becomes
+    straight again; between sums that leave as many edges, a spider on a wire
+    keeps the one joined to the same qubit on the other side (by the wires'
+    ``logical_qubit``). The map is the same. Returns the constraints of rows
+    left without edges (none in a diagram that :func:`~zxqec.gpf.reduce_gpf`
+    returned).
+    """
+    import re
+    from ..spacetime.subdiagram import get_logical_qubit
+
+    def outcomes(p: Any) -> list[str]:
+        return sorted(str(x) for x in p.free_vars()) if isinstance(p, Poly) else []
+
+    def order(name: str) -> tuple[int, str]:
+        n = re.findall(r'\d+', name)
+        return (int(n[-1]) if n else -1, name)
+
+    def wire(v: Any, boundaries: list[Any]) -> Any:
+        """The qubit of the boundary in ``boundaries`` that ``v`` is joined to, if any."""
+        b = next((u for u in g.neighbors(v) if u in boundaries), None)
+        return None if b is None else get_logical_qubit(g, b)
+
+    constraints: list[Any] = []
+    for side in (VertexType.X, VertexType.Z):
+        m = split_matrix(g, side)
+        own, other = (list(g.outputs()), list(g.inputs())) if side == VertexType.X else \
+            (list(g.inputs()), list(g.outputs()))
+        cols = m.external + m.internal
+        col_wire = [wire(c, other) if g.type(c) != VertexType.BOUNDARY else None for c in cols]
+        free = [i for i in m.free_rows() if outcomes(m.phases[i])]
+        used: set[int] = set()
+        for name in sorted({x for i in free for x in outcomes(m.phases[i])}, key=order):
+            pivot = next((i for i in free if i not in used and name in outcomes(m.phases[i])), None)
+            if pivot is None:
+                continue
+            used.add(pivot)
+            for i in free:
+                if i != pivot and name in outcomes(m.phases[i]):
+                    m.entries[i] = [a ^ b for a, b in zip(m.entries[i], m.entries[pivot])]
+                    m.phases[i] = phase_mod2(m.phases[i] + m.phases[pivot])
+        checks = sorted(used)
+        for i in range(len(m.rows)):           # every other row: the sum of checks that takes most edges away
+            if i not in used:
+                home = wire(m.rows[i], own)
+                _fewest_edges(m, i, checks, [j for j, w in enumerate(col_wire) if home is not None and w == home])
+        constraints += apply_matrix(g, m)
+    return constraints
+
+
+def _fewest_edges(m: SplitMatrix, i: int, checks: list[int], home: list[int], search: int = 12) -> None:
+    """Add to row ``i`` the sum of ``checks`` that leaves it fewest edges, and of those one with an edge to a
+    column in ``home`` (the same qubit's spider on the other side), with their phases: every sum when there are at
+    most ``search`` checks, else one check at a time while that helps."""
+    from itertools import combinations
+
+    def plus(row: list[int], sources: tuple[int, ...]) -> list[int]:
+        for c in sources:
+            row = [a ^ b for a, b in zip(row, m.entries[c])]
+        return row
+
+    def cost(row: list[int]) -> tuple[int, int]:
+        return sum(row), 0 if any(row[j] for j in home) else 1
+
+    if len(checks) <= search:
+        sums = [s for k in range(1, len(checks) + 1) for s in combinations(checks, k)]
+        best = min(sums, key=lambda s: cost(plus(m.entries[i], s)), default=())
+        if best and any(plus(m.entries[i], best)) and cost(plus(m.entries[i], best)) < cost(m.entries[i]):
+            m.entries[i] = plus(m.entries[i], best)
+            for c in best:
+                m.phases[i] = phase_mod2(m.phases[i] + m.phases[c])
+        return
+    better = True
+    while better:
+        better = False
+        for c in checks:
+            row = plus(m.entries[i], (c,))
+            if any(row) and sum(row) < sum(m.entries[i]):
+                m.entries[i] = row
+                m.phases[i] = phase_mod2(m.phases[i] + m.phases[c])
+                better = True
 
 
 def change_variables(g: BaseGraph[VT, ET], rows: Any, fuse: bool = True) -> BaseGraph[VT, ET]:

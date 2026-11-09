@@ -73,12 +73,12 @@ from typing import Any
 
 from pyzx.graph.base import BaseGraph
 from pyzx.symbolic import new_var
-from pyzx.utils import VertexType
+from pyzx.utils import EdgeType, VertexType, is_pauli
 
 from .matrix import phase_mod2
 from .normal_form import GPF_ROLE_KEY, LEAF, is_leaf
 
-__all__ = ['simplify_gadgets', 'phase_polynomial']
+__all__ = ['simplify_gadgets', 'phase_polynomial', 'normalize_gadget_angles', 'open_leaves']
 
 Poly = dict          # frozenset of variables -> Fraction in [0, 2)
 
@@ -94,8 +94,8 @@ def _add(p: Poly, mono: frozenset, coeff: Fraction) -> None:
 def _split_phase(phase: Any) -> tuple[Fraction, list[str]]:
     """A phase ``a + (c_1 + ... + c_m)`` (units of pi) as its constant and its Boolean variables.
 
-    Raises ``ValueError`` for anything else (a non-dyadic constant, a product of
-    variables, a non-Boolean variable, or a non-integer coefficient on a variable).
+    Raises ``ValueError`` for anything else (a product of variables, a non-Boolean
+    variable, or a non-integer coefficient on a variable).
     """
     if not hasattr(phase, 'terms'):
         return Fraction(phase) % 2, []
@@ -387,3 +387,94 @@ def simplify_gadgets(g: BaseGraph) -> bool:
         for v in ys:
             g.add_edge((hub, v))
     return True
+
+
+def _plus_pi(p: Any) -> Any:
+    """``p + pi`` modulo 2: through :func:`phase_mod2` for a Pauli phase, with ``% 2`` otherwise."""
+    return phase_mod2(p + 1) if is_pauli(p) else (p + 1) % 2
+
+
+def normalize_gadget_angles(g: BaseGraph) -> bool:
+    """Bring every Z-gadget's angle into ``(-pi/2, pi/2]`` (in place); returns whether ``g`` changed.
+
+    A gadget reading the bits ``y_1 ... y_n`` with a hub of Pauli parity ``s``
+    multiplies each term by ``exp(i pi a (s xor y_1 xor ... xor y_n))``. If the
+    angle ``a`` (the constant part of the leaf, units of pi) is in ``(1/2, 3/2]``,
+    it becomes ``a - 1``, and the factor ``(-1)^(y_1) ... (-1)^(y_n)`` this takes
+    out goes onto the spiders the hub reads, as a ``pi`` on each: ``5pi/4`` is
+    written as ``pi/4`` and a ``pi`` on those spiders. The sign ``(-1)^s`` that is
+    left depends only on the hub's outcomes and switches; it is dropped, so the
+    map is kept up to a non-zero scalar in every run, as :func:`reduce_gpf`
+    keeps it. Use it for drawing, on a copy. A gadget whose leaf phase becomes 0
+    (an angle of pi with no outcome on the leaf) is the identity and is removed.
+    The outcomes on a leaf stay on it, so such a leaf keeps them and stays. Only gadgets
+    of GPF shape are changed (see :func:`~zxqec.gpf.is_gpf`): one Z-leaf on the hub
+    and plain edges. Other hubs, gadgets of X colour, and gadgets whose phases are
+    not a constant plus a parity of outcomes, are left alone.
+    """
+    reg = g.var_registry
+    changed = False
+    for hub in sorted(g.vertices()):
+        if hub not in g.vertices() or g.type(hub) != VertexType.X or is_leaf(g, hub):
+            continue
+        leaves = [w for w in g.neighbors(hub) if is_leaf(g, w)]
+        if len(leaves) != 1 or g.type(leaves[0]) != VertexType.Z:
+            continue                   # not a phase gadget of GPF shape: leave it alone
+        if any(g.edge_type(g.edge(hub, w)) != EdgeType.SIMPLE for w in g.neighbors(hub)):
+            continue
+        reads = [w for w in g.neighbors(hub) if not is_leaf(g, w)]
+        if not reads or any(g.type(w) != VertexType.Z for w in reads):
+            continue                   # not a gadget on Z-layer bits; leave it alone
+        try:
+            hub_const, _hub_vars = _split_phase(g.phase(hub))
+        except ValueError:
+            continue
+        if hub_const % 1:
+            continue                   # the hub is not Pauli: not a phase gadget
+        moved = False
+        for leaf in leaves:
+            try:
+                a, names = _split_phase(g.phase(leaf))
+            except ValueError:
+                continue
+            if not Fraction(1, 2) < a <= Fraction(3, 2):
+                continue
+            new: Any = (a - 1) % 2
+            for c in names:
+                new = new + new_var(c, True, reg)
+            g.set_phase(leaf, new)
+            for r in reads:
+                g.set_phase(r, _plus_pi(g.phase(r)))
+            moved = True
+        if moved and all(not hasattr(g.phase(w), 'terms') and g.phase(w) == 0 for w in leaves):
+            g.remove_vertices(leaves + [hub])
+        changed |= moved
+    return changed
+
+
+def open_leaves(g: BaseGraph, leaves: list[Any] | None = None) -> tuple[BaseGraph, list[Any]]:
+    """A clone of ``g`` with the given gadget leaves (all of them by default) taken off, each hub given an output.
+
+    Each leaf is removed and its hub gets a new output wire, added after the
+    old outputs in the order of ``leaves`` (by default the leaves in increasing
+    vertex order; the clone keeps the vertices of ``g``). Plugging the effect
+    ``<0| + e^(i a)<1|`` of a Z-leaf of angle ``a`` (``<+| + e^(i a)<-|`` for an
+    X-leaf) back onto its new output gives ``g`` again; with every leaf taken off
+    and every other phase Pauli, the clone is Clifford. A ``Z`` on the new output
+    of a Z-leaf (an ``X`` for an X-leaf) is a ``pi`` on that leaf: an error right
+    after the gate the gadget came from. Returns the clone and the new output
+    vertices.
+    """
+    h = g.clone()
+    if leaves is None:
+        leaves = sorted(v for v in h.vertices() if is_leaf(h, v))
+    new = []
+    for leaf in leaves:
+        (hub,) = list(h.neighbors(leaf))
+        et = h.edge_type(h.edge(hub, leaf))
+        h.remove_vertex(leaf)
+        b = h.add_vertex(VertexType.BOUNDARY, qubit=h.qubit(hub), row=h.row(hub) + 1)
+        h.add_edge((hub, b), et)
+        new.append(b)
+    h.set_outputs(tuple(h.outputs()) + tuple(new))
+    return h, new

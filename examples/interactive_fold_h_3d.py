@@ -51,7 +51,7 @@ import matplotlib.pyplot as plt
 
 import pyzx as zx
 from pyzx.circuit import Circuit
-from pyzx.circuit.gates import HAD, Reset
+from pyzx.circuit.gates import HAD, Reset, Z
 from zxqec.qprogram import QProgram
 from zxqec.spacetime import VIEWS, Topology, draw_graph_3d, draw_program_3d
 
@@ -84,16 +84,18 @@ def with_prefix(circ: Circuit, gates: list) -> Circuit:
     return c
 
 
-def build_topology() -> Topology:
+def build_topology(places: dict[int, tuple[float, float]] | None = None) -> Topology:
+    """The chip: ``COORDS`` and ``EDGES``; ``places`` puts some qubits somewhere else in the picture."""
     topo = Topology(2)
-    for n, c in COORDS.items():
+    for n, c in {**COORDS, **(places or {})}.items():
         topo.add_node(n, c)
     for a, b in EDGES:
         topo.add_edge(a, b)
     return topo
 
 
-def build_program(miswired: bool = False, cnot_order: str = "thesis") -> QProgram:
+def build_program(miswired: bool = False, cnot_order: str = "thesis", z_error: int | None = None,
+                  prepare_when_used: bool = False, places: dict[int, tuple[float, float]] | None = None) -> QProgram:
     """The protocol as in the notebook, plus two levels grouping the stages into the protocol's phases.
 
     ``miswired`` puts back the wiring error of the thesis's circuit files: one Z check of the round
@@ -101,6 +103,15 @@ def build_program(miswired: bool = False, cnot_order: str = "thesis") -> QProgra
     ``cnot_order="N"`` takes the X checks of code 2 and the Z checks after the rotation from the
     ``*_n_order.qasm`` files, whose weight-4 checks run their CNOTs in N order; the noiseless program
     is the same, the circuit distance rises from 2 to 3 (``CircuitDistance.ipynb``).
+    ``z_error`` puts a Z on the data qubit at that position of the grid (1-9) at the start of stage 6,
+    right after the Z checks that ``miswired`` changes: the place where the wiring error leaves the code
+    with distance 1 (``paper/sqz_fold_h``). Stage and block indices are the same as without it.
+    ``prepare_when_used`` prepares each qubit's initial state in the first stage that uses it (the Z ancillas in
+    stage 3, qubit 18 in stage 7) instead of at the start, so no identity wire runs through the stages before.
+    ``places`` draws some qubits elsewhere (``build_topology``). With ``{0: (4, 2), 14: (0.5, 1.5)}`` the stored
+    qubit sits beside the right-hand column it is encoded onto, so its edges do not cross the grid, and Z ancilla 14
+    half a step left of the grid like the other ancillas around it (``COORDS`` keeps it at x = 0, off the edge
+    from qubit 0 at (0, 0) to qubit 7, which passes through (0.5, 1.5)).
     """
     if cnot_order not in ("thesis", "N"):
         raise ValueError("cnot_order must be 'thesis' or 'N'")
@@ -109,15 +120,18 @@ def build_program(miswired: bool = False, cnot_order: str = "thesis") -> QProgra
     if miswired:
         with open(os.path.join(CIRCUITS, "ft_h_5" + suffix + ".qasm")) as f:
             ft_h_5 = zx.Circuit.from_qasm(f.read().replace("cx q[4], q[14];", "cx q[2], q[14];", 1))
-    p = QProgram(N, bits=BITS, topology=build_topology(),
-                 initial_states={**{q: '0' for q in range(1, 10)}, 18: '0', **{a: '+' for a in X_ANC + Z_ANC}})
+    p = QProgram(N, bits=BITS, topology=build_topology(places),
+                 initial_states={**{q: '0' for q in range(1, 10)}, 18: '0', **{a: '+' for a in X_ANC + Z_ANC}},
+                 prepare_when_used=prepare_when_used)
     p.add_circuit(load("ft_h"), name="encode + X checks")
     p.add_circuit(load("ft_h_2"), name="transversal H")
     p.add_circuit(with_prefix(load("ft_h_3"), [Reset(a) for a in X_ANC]), name="Z checks (code 2)")
     p.add_circuit(load("ft_h_3.2" + suffix), name="X checks (code 2)")
     p.add_permutation([0, 3, 6, 9, 2, 5, 8, 1, 4, 7] + list(range(10, 19)), name="rotate 90°")
     p.add_circuit(with_prefix(ft_h_5, [Reset(a) for a in Z_ANC]), name="Z checks", physical=True)
-    p.add_circuit(with_prefix(load("ft_h_5.2"), [g for a in X_ANC for g in (Reset(a), HAD(a))]), name="X checks", physical=True)
+    error = [Z(z_error)] if z_error is not None else []
+    p.add_circuit(with_prefix(load("ft_h_5.2"), error + [g for a in X_ANC for g in (Reset(a), HAD(a))]), name="X checks",
+                  physical=True)
     p.add_circuit(with_prefix(load("ft_h_6"), [Reset(a) for a in Z_ANC]), name="Z checks + decode", physical=True)
 
     # level 1: the two check rounds of code 2 form one QEC round;

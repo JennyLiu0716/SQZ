@@ -391,3 +391,91 @@ def _alternate_once(h):
         R.apply_matrix(h, m)
     R._remove_isolated_pairs(h)
     return changed
+
+
+def _steane_rounds(between):
+    """Two rounds of checks of the Steane code, with the gates of ``between`` on the data in the middle."""
+    from zxqec.qprogram import QProgram
+    head = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[13];\ncreg c[12];\n'
+    checks = [(0, 2, 4, 6), (1, 2, 5, 6), (3, 4, 5, 6)]
+
+    def round_(first):
+        text = ''
+        for k, support in enumerate(checks):
+            a = 7 + k
+            text += 'reset q[%d];\nh q[%d];\n' % (a, a) + ''.join('cx q[%d], q[%d];\n' % (a, d) for d in support)
+            text += 'h q[%d];\nmeasure q[%d] -> c[%d];\n' % (a, a, first + k)
+            a = 10 + k
+            text += 'reset q[%d];\n' % a + ''.join('cx q[%d], q[%d];\n' % (d, a) for d in support)
+            text += 'measure q[%d] -> c[%d];\n' % (a, first + 3 + k)
+        return text
+    p = QProgram(13, bits=12, initial_states={a: '0' for a in range(7, 13)})
+    p.add_circuit(Circuit.from_qasm(head + round_(0)), name='round 1')
+    if between:
+        p.add_circuit(Circuit.from_qasm(head + ''.join('%s q[%d];\n' % (between, q) for q in range(7))), name='between')
+    p.add_circuit(Circuit.from_qasm(head + round_(6)), name='round 2')
+    return p.quantum_graph()
+
+
+def _css_circuits(seed, count):
+    """Random CSS circuits: CNOT, Paulis, preparations and measurements in the Z or X basis."""
+    from pyzx.circuit.gates import NOT, Z
+    rng = random.Random(seed)
+    for _ in range(count):
+        n = rng.randint(3, 12)
+        c = Circuit(n, bit_amount=30)
+        m = 0
+        for _ in range(rng.randint(10, 150)):
+            r = rng.random()
+            a, b = rng.sample(range(n), 2)
+            if r < 0.7:
+                c.add_gate(CNOT(a, b))
+            elif r < 0.8:
+                c.add_gate(NOT(a))
+            elif r < 0.85:
+                c.add_gate(Z(a))
+            elif m < 30:
+                if rng.random() < 0.5:
+                    c.add_gate(HAD(a))              # X basis: the Hadamard sits next to the measurement
+                c.add_gate(Measurement(a, result_symbol='c[%d]' % m))
+                c.add_gate(Reset(a))
+                if rng.random() < 0.5:
+                    c.add_gate(HAD(a))              # X basis: and next to the preparation
+                m += 1
+        yield circuit_to_graph(c, initialize_qubits=[rng.random() < 0.5 for _ in range(n)])
+
+
+def _repetition_with_corrections():
+    """Two rounds of checks of the repetition code with an error and Paulis conditioned on the results."""
+    from zxqec.qprogram import QProgram
+    head = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[5];\ncreg c[2];\ncreg d[2];\n'
+    checks = ('h q[3]; h q[4];\ncx q[3], q[0]; cx q[3], q[1];\ncx q[4], q[1]; cx q[4], q[2];\n'
+              'h q[3]; h q[4];\nmeasure q[3] -> c[0];\nmeasure q[4] -> c[1];\n')
+    fix = 'if(c==1) z q[0];\nif(c==3) z q[1];\nif(c==2) z q[2];\n'
+    p = QProgram(5, bits=4, initial_states={3: '0', 4: '0'})
+    for name, text in (('round 1', checks), ('fix 1', fix), ('error', 'z q[0];\nz q[1];\n'),
+                       ('round 2', 'reset q[3]; reset q[4];\n' + checks.replace('c[', 'd[')),
+                       ('fix 2', fix.replace('if(c', 'if(d'))):
+        p.add_circuit(Circuit.from_qasm(head + text), name=name)
+    return p.quantum_graph()
+
+
+def test_css_circuits_have_no_gadgets_and_stop_within_two_rounds(monkeypatch):
+    # the corollary of appendix A: the default reduce_gpf, with its gadget passes on
+    count = _round_counter(monkeypatch)
+    for g in list(_css_circuits(2026, 300)) + [_steane_rounds(None), _repetition_with_corrections()]:
+        h = NF.to_gpf(g)
+        assert not any(NF.is_leaf(h, v) for v in h.vertices())
+        count[0] = 0
+        reduce_gpf(g)
+        assert count[0] <= 2
+
+
+def test_a_css_code_is_not_enough(monkeypatch):
+    # the number appendix A quotes: transversal S maps the Steane code to itself but makes gadgets
+    count = _round_counter(monkeypatch)
+    g = _steane_rounds('s')
+    h = NF.to_gpf(g)
+    assert sum(1 for v in h.vertices() if NF.is_leaf(h, v)) == 7
+    reduce_gpf(g)
+    assert count[0] == 5

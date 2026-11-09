@@ -140,6 +140,95 @@ def test_z_distance_through_t_refuses_when_removing_t_is_not_exact():
     with pytest.raises(TRemovalError, match='X correction'):
         z_distance_through_t(_two_qubit_program([HAD(0), Measurement(0, result_bit=0),
                                                  ParityControlled('X', 1, ['c[0]']), T(1)]))
+    # the same with the correction written in OpenQASM, if(c==1) x q[1];
+    from pyzx.circuit.gates import NOT, ConditionalGate
+    with pytest.raises(TRemovalError, match='X correction'):
+        z_distance_through_t(_two_qubit_program([HAD(0), Measurement(0, result_bit=0),
+                                                 ConditionalGate('c', 1, NOT(1), 1), T(1)]))
+
+
+_REPETITION_QASM = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[7];\ncreg a[1];\ncreg b[1];\ncreg c[1];\ncreg d[1];\n'
+
+
+def _repetition_rounds(parity_controlled):
+    # the bit-flip repetition code on qubits 0-2 (qubit 0 the input), two rounds of Z0 Z1 and Z1 Z2 checks with fresh
+    # ancillas (3-4, then 5-6), each round followed by X on qubit 0 if its first check gave 1 and X on qubit 2 if its
+    # second did: if(a==1) x q[0]; in OpenQASM, or the same correction as ParityControlled('X', 0, ['a[0]'])
+    from pyzx.circuit import Circuit
+    from pyzx.circuit.gates import ConditionalGate
+    p = QProgram(7, bits=4, initial_states={q: '0' for q in range(1, 7)})
+    p.add_circuit(Circuit.from_qasm(_REPETITION_QASM + 'cx q[0], q[1];\ncx q[0], q[2];\n'), name='encode')
+    for s, t, a, b in ((3, 4, 'a', 'b'), (5, 6, 'c', 'd')):
+        c = Circuit.from_qasm(_REPETITION_QASM + (
+            'cx q[0], q[{s}];\ncx q[1], q[{s}];\ncx q[1], q[{t}];\ncx q[2], q[{t}];\n'
+            'measure q[{s}] -> {a}[0];\nmeasure q[{t}] -> {b}[0];\n'
+            'if({a}==1) x q[0];\nif({b}==1) x q[2];\n').format(s=s, t=t, a=a, b=b))
+        if parity_controlled:
+            gates = [ParityControlled('X', g.target, [g.condition_register + '[0]'])
+                     if isinstance(g, ConditionalGate) else g for g in c.gates]
+            c = Circuit(7, bit_amount=4)
+            for g in gates:
+                c.add_gate(g)
+        p.add_circuit(c, name='round')
+    return p
+
+
+def test_an_openqasm_pauli_correction_is_fed_forward_as_a_parity_controlled_one():
+    # if(a==1) x q[0]; becomes Stim's CX rec[-2] 0, as ParityControlled('X', 0, ['a[0]']) does: the same circuits
+    # and distances (X faults: 3, the repetition code's; any fault: 1, a Z fault on a data qubit). Before, the
+    # ConditionalGate was "not a Clifford gate this function supports"
+    qasm, parity = _repetition_rounds(False), _repetition_rounds(True)
+    assert type(qasm.stage_circuit(1).gates[-1]).__name__ == 'ConditionalGate'
+    for kind, expected in (('full', 1), ('X', 3)):
+        a, b = circuit_distance(qasm, 1, 2, kind), circuit_distance(parity, 1, 2, kind)
+        assert a.distance == b.distance == expected and a.by_logical == b.by_logical
+        assert a.circuits == b.circuits
+    assert 'M 4\nCX rec[-2] 0\nCX rec[-1] 2\n' in a.circuits[('Z', 'Z')]
+
+
+def test_one_fault_that_no_detector_sees_gives_z_distance_1():
+    # a Z fault on a data qubit of the bit-flip repetition code flips its logical X and no detector, and so does every
+    # other Z fault that flips anything: the detector error model has the one error L0. codedistance's MIPDist reads a
+    # lightest fault set that takes every distinct error as no solution, and gave 0
+    r = circuit_distance(_repetition_rounds(True), 1, 2, 'Z')
+    dem = stim.Circuit(r.circuits[('X', 'X')]).detector_error_model()
+    assert [str(e).split(' ')[1:] for e in dem.flattened() if e.type == 'error'] == [['L0']]
+    assert r.distance == r.by_logical[('X', 'X')] == 1 and r.by_logical[('Z', 'Z')] is None
+    faults = r.explain()
+    assert len(faults) == 1 and faults[0].pauli in ('Z0', 'Z1', 'Z2')
+    # MIPDist also gives 0 when the lightest set is two errors and there are no others, and when there is none
+    from zxqec.qprogram.distance import _every_error_distance
+    for errors, expected in ((['L0'], 1), (['D0 L0', 'D0'], 2), (['D0 L0'], None), (['D0 L0', 'D1'], None)):
+        assert _every_error_distance(stim.DetectorErrorModel(
+            '\n'.join('error(0.1) ' + e for e in errors))) == expected
+
+
+def test_openqasm_corrections_stim_cannot_feed_forward_are_refused():
+    # Stim feeds a Pauli forward from outcomes: if(c==1) z q[0]; (also as rz(-pi)) on a register of one bit is written
+    # as ParityControlled('Z', 0, ['c[0]']) is; a rotation that is not a Pauli, a condition on an outcome being 0,
+    # or on a register of several bits (a product of outcomes), is refused
+    from pyzx.circuit import Circuit
+    from pyzx.circuit.gates import HAD, Measurement
+
+    def program(bits, correction):
+        p = QProgram(2, bits=bits, initial_states={1: '0'})
+        p.add_circuit(Circuit.from_qasm('OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncreg c[{}];\n'
+                                        'h q[1];\nmeasure q[1] -> c[0];\n{}'.format(bits, correction)), name='a')
+        return p
+    p = QProgram(2, bits=1, initial_states={1: '0'})
+    c = Circuit(2, bit_amount=1)
+    for g in (HAD(1), Measurement(1, result_bit=0), ParityControlled('Z', 0, ['c[0]'])):
+        c.add_gate(g)
+    p.add_circuit(c, name='a')
+    expected = circuit_distance(p).circuits
+    for correction in ('if(c==1) z q[0];\n', 'if(c==1) rz(-pi) q[0];\n'):
+        assert circuit_distance(program(1, correction)).circuits == expected
+    for bits, correction, reason in ((1, 'if(c==1) s q[0];\n', 'only Paulis'),
+                                     (1, 'if(c==0) z q[0];\n', r'when c\[0\] is 0'),
+                                     (2, 'if(c==1) z q[0];\n', 'product of the 2 outcomes of c'),
+                                     (2, 'if(c==3) z q[0];\n', 'product of the 2 outcomes of c')):
+        with pytest.raises(NotCliffordError, match=reason):
+            circuit_distance(program(bits, correction))
 
 
 def test_gidneys_published_d5_circuit_has_the_same_operations_and_fault_distance_4():
