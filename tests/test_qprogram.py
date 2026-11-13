@@ -170,6 +170,26 @@ def test_permutation_changes_layout_not_semantics():
         q.add_permutation([0, 0, 1])
 
 
+def test_permutation_cross_inside():
+    # cross_inside: each moved wire gets an identity on its old place, a tick before the one on its new place, so
+    # the stage takes two ticks and every edge between different places lies inside it; the map is the same
+    plain, inside = QProgram(3), QProgram(3)
+    for q, cross in ((plain, False), (inside, True)):
+        q.add_circuit(STAGES[0]); q.add_permutation([2, 1, 0], cross_inside=cross); q.add_circuit(STAGES[1])
+    g, h = plain.graph(), inside.graph()
+    assert zx.compare_tensors(h, g, preserve_scalar=False)
+    assert inside.mapping == plain.mapping == (2, 1, 0)
+    t0, t1 = inside.stage(1).ticks
+    assert t1 == t0 + 1 and plain.stage(1).ticks[1] == plain.stage(1).ticks[0]
+    spiders = lambda graph: sum(1 for v in graph.vertices() if graph.type(v) != VertexType.BOUNDARY)
+    assert spiders(h) == spiders(g) + 2                         # wires 0 and 2 move, wire 1 stays
+    for e in h.edges():
+        a, b = h.edge_st(e)
+        if h.type(a) != VertexType.BOUNDARY and h.type(b) != VertexType.BOUNDARY and h.qubit(a) != h.qubit(b) \
+                and 1 in (get_stage(h, a), get_stage(h, b)):
+            assert get_stage(h, a) == get_stage(h, b) == 1      # the wires cross only inside the permutation
+
+
 def test_permutation_topology_check():
     p = QProgram(3, topology=Topology.line(3))
     p.add_circuit(STAGES[0])

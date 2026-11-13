@@ -42,6 +42,7 @@ constraint ``p = 0`` -- a detector of the measurement outcomes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from typing import Any
 
 from pyzx.graph.base import BaseGraph, VT, ET
@@ -51,6 +52,7 @@ from pyzx.utils import VertexType, is_pauli
 from .normal_form import is_leaf, is_stem, layout_gpf
 
 __all__ = ['SplitMatrix', 'split_matrix', 'reduce_rows', 'apply_matrix', 'change_variables', 'one_spider_per_outcome',
+           'postselected_checks',
            'phase_mod2', 'is_zero_phase']
 
 
@@ -181,7 +183,54 @@ def apply_matrix(g: BaseGraph[VT, ET], m: SplitMatrix) -> list[Any]:
     return constraints
 
 
-def one_spider_per_outcome(g: BaseGraph[VT, ET]) -> list[Any]:
+def postselected_checks(g: BaseGraph[VT, ET]) -> list[tuple[Any, frozenset[int]]]:
+    """Each post-selection of the circuit diagram ``g``, with the qubits it checks.
+
+    A post-selection is an effect that no result names: a spider with one leg, later in time
+    than the spider it is joined to, with no ``outcome_type`` (measurements, a reset's leaves and
+    preparations are left out). The qubits it checks are the ``logical_qubit`` of the spiders on
+    other wires that its wire is joined to, walking back from it along its own wire to where the
+    wire starts: for an ancilla, the data qubits of its check. Returns ``(effect, qubits)`` pairs.
+    """
+    from pyzx.spacetime import get_timestep
+    from ..spacetime.subdiagram import get_logical_qubit
+
+    ends = set(g.inputs()) | set(g.outputs())
+
+    def when(v: Any) -> tuple[float, float]:
+        t = get_timestep(g, v)
+        return (float(t) if t is not None else float(g.row(v)), float(g.row(v)))
+
+    out = []
+    for e in g.vertices():
+        if e in ends or g.vertex_degree(e) != 1 or g.vdata(e, 'outcome_type', None) is not None:
+            continue
+        (before,) = g.neighbors(e)
+        if before in ends or when(before) >= when(e):         # a preparation: its wire goes on after it
+            continue
+        k = get_logical_qubit(g, e)
+        checked: set[int] = set()
+        seen, v = {e}, before
+        while v is not None:
+            seen.add(v)
+            back = None
+            for u in g.neighbors(v):
+                if u in seen or u in ends:
+                    continue
+                q = get_logical_qubit(g, u)
+                if q == k:
+                    if when(u) <= when(v):
+                        back = u                              # the wire, one spider further back
+                elif q is not None:
+                    checked.add(q)
+            v = back
+        if checked:
+            out.append((e, frozenset(checked)))
+    return out
+
+
+def one_spider_per_outcome(g: BaseGraph[VT, ET],
+                           checks: Sequence[frozenset[int]] = ()) -> list[Any]:
     """Add free rows of each layer of the GPF diagram ``g`` to each other until each has as few outcomes as possible (in place).
 
     A GPF diagram may write the checks of a syndrome round as sums: a spider
@@ -200,6 +249,13 @@ def one_spider_per_outcome(g: BaseGraph[VT, ET]) -> list[Any]:
     ``logical_qubit``). The map is the same. Returns the constraints of rows
     left without edges (none in a diagram that :func:`~zxqec.gpf.reduce_gpf`
     returned).
+
+    A check whose result is post-selected leaves no outcome to pivot on, so the
+    reduction may write it as a sum with other such checks. ``checks`` names them
+    by the qubits each one checks (:func:`postselected_checks` of the diagram
+    before its reduction): a free row with no outcome takes up the sum of such rows
+    whose spiders on the other side are on exactly those qubits, if there is one,
+    and is then a check like those with outcomes.
     """
     import re
     from ..spacetime.subdiagram import get_logical_qubit
@@ -234,13 +290,48 @@ def one_spider_per_outcome(g: BaseGraph[VT, ET]) -> list[Any]:
                 if i != pivot and name in outcomes(m.phases[i]):
                     m.entries[i] = [a ^ b for a, b in zip(m.entries[i], m.entries[pivot])]
                     m.phases[i] = phase_mod2(m.phases[i] + m.phases[pivot])
-        checks = sorted(used)
+        silent = [i for i in m.free_rows() if not outcomes(m.phases[i])]
+        for qubits in checks:                  # post-selected checks: a sum of silent rows on exactly those qubits
+            target = [1 if w is not None and w in qubits else 0 for w in col_wire]
+            if sum(target) != len(qubits) or len(set(col_wire[j] for j in range(len(cols)) if target[j])) != len(qubits):
+                continue                       # a qubit with no spider, or with two, on the other side
+            rows = [i for i in silent if i not in used]
+            combo = _sum_to(target, [m.entries[i] for i in rows])
+            if combo is None:
+                continue
+            pivot = rows[combo[0]]
+            for c in combo[1:]:
+                m.entries[pivot] = [a ^ b for a, b in zip(m.entries[pivot], m.entries[rows[c]])]
+                m.phases[pivot] = phase_mod2(m.phases[pivot] + m.phases[rows[c]])
+            used.add(pivot)
+        checks_used = sorted(used)
         for i in range(len(m.rows)):           # every other row: the sum of checks that takes most edges away
             if i not in used:
                 home = wire(m.rows[i], own)
-                _fewest_edges(m, i, checks, [j for j, w in enumerate(col_wire) if home is not None and w == home])
+                _fewest_edges(m, i, checks_used, [j for j, w in enumerate(col_wire) if home is not None and w == home])
         constraints += apply_matrix(g, m)
     return constraints
+
+
+def _sum_to(target: list[int], rows: list[list[int]]) -> list[int] | None:
+    """Indices of ``rows`` whose sum over GF(2) is ``target`` (Gaussian elimination), or None."""
+    basis: list[tuple[list[int], set[int]]] = []          # reduced rows, each with the rows it is the sum of
+    for k, r in enumerate(rows):
+        r, made = list(r), {k}
+        for b, bmade in basis:
+            p = next(j for j, x in enumerate(b) if x)
+            if r[p]:
+                r = [x ^ y for x, y in zip(r, b)]
+                made ^= bmade
+        if any(r):
+            basis.append((r, made))
+    t, made = list(target), set()
+    for b, bmade in basis:
+        p = next(j for j, x in enumerate(b) if x)
+        if t[p]:
+            t = [x ^ y for x, y in zip(t, b)]
+            made ^= bmade
+    return None if any(t) or not made else sorted(made)
 
 
 def _fewest_edges(m: SplitMatrix, i: int, checks: list[int], home: list[int], search: int = 12) -> None:

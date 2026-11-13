@@ -51,7 +51,7 @@ import matplotlib.pyplot as plt
 
 import pyzx as zx
 from pyzx.circuit import Circuit
-from pyzx.circuit.gates import HAD, Reset, Z
+from pyzx.circuit.gates import HAD, Measurement, PostSelect, Reset, Z
 from zxqec.qprogram import QProgram
 from zxqec.spacetime import VIEWS, Topology, draw_graph_3d, draw_program_3d
 
@@ -75,6 +75,14 @@ def load(name: str) -> Circuit:
     return zx.Circuit.load(os.path.join(CIRCUITS, name + ".qasm"))
 
 
+def post_selected(circ: Circuit) -> Circuit:
+    """``circ`` with every measurement replaced by post-selecting its result 0 (the effect <0|): no result bit."""
+    c = Circuit(circ.qubits, bit_amount=circ.bits)
+    for g in circ.gates:
+        c.add_gate(PostSelect(g.target, '0') if isinstance(g, Measurement) else g)
+    return c
+
+
 def with_prefix(circ: Circuit, gates: list) -> Circuit:
     """``gates`` (ancilla preparations) followed by ``circ``."""
     c = Circuit(N, bit_amount=BITS)
@@ -95,7 +103,8 @@ def build_topology(places: dict[int, tuple[float, float]] | None = None) -> Topo
 
 
 def build_program(miswired: bool = False, cnot_order: str = "original", z_error: int | None = None,
-                  prepare_when_used: bool = False, places: dict[int, tuple[float, float]] | None = None) -> QProgram:
+                  prepare_when_used: bool = False, places: dict[int, tuple[float, float]] | None = None,
+                  post_select_encoder: bool = False, cross_inside: bool = False) -> QProgram:
     """The protocol as in the notebook, plus two levels grouping the stages into the protocol's phases.
 
     ``miswired`` puts back the wiring error of the original circuit files: one Z check of the round
@@ -112,6 +121,11 @@ def build_program(miswired: bool = False, cnot_order: str = "original", z_error:
     qubit sits beside the right-hand column it is encoded onto, so its edges do not cross the grid, and Z ancilla 14
     half a step left of the grid like the other ancillas around it (``COORDS`` keeps it at x = 0, off the edge
     from qubit 0 at (0, 0) to qubit 7, which passes through (0.5, 1.5)).
+    ``post_select_encoder`` replaces every measurement of the first stage (encode + X checks) by post-selecting
+    result 0 (``post_selected``): a phase-free encoder, every check starting at +1. The decoder still measures, so
+    its results stay Boolean phases (post-selecting them too would make the map zero when a fault flips a check).
+    ``cross_inside`` gives the quarter turn its own two ticks, its wires crossing between an identity on their old
+    place and one on their new place (``add_permutation``).
     """
     if cnot_order not in ("original", "N"):
         raise ValueError("cnot_order must be 'original' or 'N'")
@@ -123,11 +137,13 @@ def build_program(miswired: bool = False, cnot_order: str = "original", z_error:
     p = QProgram(N, bits=BITS, topology=build_topology(places),
                  initial_states={**{q: '0' for q in range(1, 10)}, 18: '0', **{a: '+' for a in X_ANC + Z_ANC}},
                  prepare_when_used=prepare_when_used)
-    p.add_circuit(load("ft_h"), name="encode + X checks")
+    encoder = load("ft_h")
+    p.add_circuit(post_selected(encoder) if post_select_encoder else encoder, name="encode + X checks")
     p.add_circuit(load("ft_h_2"), name="transversal H")
     p.add_circuit(with_prefix(load("ft_h_3"), [Reset(a) for a in X_ANC]), name="Z checks (code 2)")
     p.add_circuit(load("ft_h_3.2" + suffix), name="X checks (code 2)")
-    p.add_permutation([0, 3, 6, 9, 2, 5, 8, 1, 4, 7] + list(range(10, 19)), name="rotate 90°")
+    p.add_permutation([0, 3, 6, 9, 2, 5, 8, 1, 4, 7] + list(range(10, 19)), name="rotate 90°",
+                      cross_inside=cross_inside)
     p.add_circuit(with_prefix(ft_h_5, [Reset(a) for a in Z_ANC]), name="Z checks", physical=True)
     error = [Z(z_error)] if z_error is not None else []
     p.add_circuit(with_prefix(load("ft_h_5.2"), error + [g for a in X_ANC for g in (Reset(a), HAD(a))]), name="X checks",

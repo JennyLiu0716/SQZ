@@ -543,7 +543,7 @@ def without_gates(program: QProgram, gates: Iterable[str] = ('T',)) -> QProgram:
     for st in stages:
         if st.kind == 'permutation':
             assert st.perm is not None
-            out.add_permutation(list(st.perm), name=st.name, visible=st.visible)
+            out.add_permutation(list(st.perm), name=st.name, visible=st.visible, cross_inside=st.cross_inside)
             continue
         c = Circuit(program.qubits, bit_amount=program.bits)
         for g in st.circuit.gates:

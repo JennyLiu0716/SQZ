@@ -180,7 +180,8 @@ def draw_program(program: 'QProgram', level: int | None = None, *,
                  time_axis: bool = True, show_time: bool = True, alpha: float = 0.15,
                  classical: bool = False, positions: Any = None, even_rows: bool = False,
                  labels_above: bool = False, blocks: Sequence[int] | None = None,
-                 label_size: float | None = None, label_side: str = 'below', **kwargs: Any) -> Any:
+                 label_size: float | None = None, label_side: str = 'below', time_scale: float = 1.0,
+                 **kwargs: Any) -> Any:
     """Draw the master graph of ``program`` in 2D with matplotlib; returns the figure.
 
     With ``time_axis`` (default) spiders are placed at their timestep along the
@@ -201,7 +202,10 @@ def draw_program(program: 'QProgram', level: int | None = None, *,
     phase labels (PyZX writes them at 8 points), for a drawing shown smaller than it is
     drawn, as in a paper; each label then hangs just below its spider, on a light
     background, so that a large label does not run into the spider, or with
-    ``label_side='right'`` sits just right of it (for spiders one row apart). Remaining
+    ``label_side='right'`` sits just right of it (for spiders one row apart). With
+    ``time_axis``, ``time_scale`` draws time that many times as wide (``2.0``: spiders that
+    share a wire and a tick, 0.3-0.45 of a tick apart, no longer touch), the shading of the
+    blocks included; ``positions`` are then in the stretched coordinates. Remaining
     keyword arguments go to :func:`pyzx.draw_matplotlib` (e.g. ``figsize``, ``labels``).
     """
     from pyzx.drawing import draw_matplotlib
@@ -209,6 +213,11 @@ def draw_program(program: 'QProgram', level: int | None = None, *,
 
     g = program.graph() if classical else program.quantum_graph()
     h = program_layout(program, time_axis, classical)
+    scale = time_scale if time_axis else 1.0
+    if scale != 1.0:
+        h = h.clone()                         # clone keeps the vertex numbers; never move the master graph
+        for v in h.vertices():
+            h.set_row(v, h.row(v) * scale)
     if even_rows:
         h = h.clone()                         # clone keeps the vertex numbers; never move the master graph
         order = {r: i for i, r in enumerate(sorted({h.row(v) for v in h.vertices()}))}
@@ -243,13 +252,14 @@ def draw_program(program: 'QProgram', level: int | None = None, *,
         shown: list[tuple[float, float]] = []      # the spans of the blocks drawn, with blocks
         for i, ((label, ranges), color) in enumerate(zip(_block_tick_ranges(program, level), colors)):
             for lo, hi in ranges:
-                x0, x1 = (lo - 0.5, hi + 0.5) if time_axis else _row_span(h if even_rows else g, program, lo, hi)
+                x0, x1 = ((lo - 0.5) * scale, (hi + 0.5) * scale) if time_axis else \
+                    _row_span(h if even_rows else g, program, lo, hi)
                 ax.axvspan(x0, x1, facecolor=color, alpha=alpha, zorder=-1)
                 if blocks is not None and i in blocks:
                     shown.append((x0, x1))
             if ranges and (blocks is None or i in blocks):
                 lo = ranges[0][0]
-                x0 = lo - 0.5 if time_axis else _row_span(h if even_rows else g, program, lo, lo)[0]
+                x0 = (lo - 0.5) * scale if time_axis else _row_span(h if even_rows else g, program, lo, lo)[0]
                 placed.append((x0 + 0.1, label, color))
         if blocks is not None:
             if not shown:
@@ -269,12 +279,12 @@ def draw_program(program: 'QProgram', level: int | None = None, *,
 
 
 def block_spans(program: 'QProgram', level: int, *, time_axis: bool = True, even_rows: bool = False,
-                classical: bool = False) -> list[tuple[str, list[tuple[float, float]]]]:
+                classical: bool = False, time_scale: float = 1.0) -> list[tuple[str, list[tuple[float, float]]]]:
     """Where :func:`draw_program` shades the blocks of ``level``: for every block, its label and the
     horizontal intervals it covers (one per stage tick range), in the drawing's data coordinates.
 
-    ``time_axis``, ``even_rows`` and ``classical`` are the options of :func:`draw_program` (drawn
-    without ``positions``). With the axes of the drawing filling its figure, ``(x - left) /
+    ``time_axis``, ``even_rows``, ``classical`` and ``time_scale`` are the options of
+    :func:`draw_program` (drawn without ``positions``). With the axes of the drawing filling its figure, ``(x - left) /
     (right - left)`` for the axes' x-limits ``(left, right)`` is where a block starts or ends as a
     fraction of the figure's width: where a paper's figure can join the drawing to other pictures.
     """
@@ -285,7 +295,8 @@ def block_spans(program: 'QProgram', level: int, *, time_axis: bool = True, even
         order = {r: i for i, r in enumerate(sorted({rows.row(v) for v in rows.vertices()}))}
         for v in rows.vertices():
             rows.set_row(v, order[rows.row(v)])
-    return [(label, [(lo - 0.5, hi + 0.5) if time_axis else _row_span(rows if even_rows else g, program, lo, hi)
+    return [(label, [((lo - 0.5) * time_scale, (hi + 0.5) * time_scale) if time_axis
+                     else _row_span(rows if even_rows else g, program, lo, hi)
                      for lo, hi in ranges])
             for label, ranges in _block_tick_ranges(program, level)]
 
@@ -1535,6 +1546,7 @@ def _positioned(program: 'QProgram', rb: Any, by_outcomes: bool = False, crossin
         pos = _between_wire_ends(g, *_wire_ends(program, rb.block, g), min_stub)
         if by_outcomes:
             _over_outcomes(g, pos, _outcome_places(program, rb.block))
+            _over_postselections(g, pos, _postselect_places(program, rb.block))
     for v, p in pos.items():
         g.set_vdata(v, _POSITION, p)
     return g
@@ -1577,6 +1589,35 @@ def _outcome_places(program: 'QProgram', block: Any) -> dict[str, tuple[float, f
     cpos = _positions(cut, program.topology)
     return {cut.vdata(v, 'result_symbol'): cpos[v] for v in cut.vertices()
             if cut.vdata(v, 'outcome_type', None) == 'measurement' and cut.vdata(v, 'result_symbol', None)}
+
+
+def _postselect_places(program: 'QProgram', block: Any) -> list[tuple[frozenset[int], tuple[float, float, float]]]:
+    """For each post-selection in ``block`` (:func:`~zxqec.gpf.postselected_checks` of its cut diagram): the
+    qubits it checks, and its ``(x, y, t)``."""
+    from ..gpf import postselected_checks
+
+    cut = program._without_classical(program._subdiagram(set(block.stages)))
+    cpos = _positions(cut, program.topology)
+    return [(qubits, cpos[e]) for e, qubits in postselected_checks(cut)]
+
+
+def _over_postselections(g: BaseGraph, pos: dict[Any, tuple[float, float, float]],
+                         places: list[tuple[frozenset[int], tuple[float, float, float]]]) -> None:
+    """Move each spider joined to no boundary, with no outcome in its phase, over the post-selection that checks
+    the same qubits: those of the boundaries its neighbours are joined to (a check spider of a block whose results
+    are post-selected, placed as :func:`_over_outcomes` places one that has its result)."""
+    from .subdiagram import get_logical_qubit
+
+    if not places:
+        return
+    ends = set(g.inputs()) | set(g.outputs())
+    for v in g.vertices():
+        if v in ends or any(u in ends for u in g.neighbors(v)) or _outcome_names(g.phase(v)):
+            continue
+        checked = {get_logical_qubit(g, b) for u in g.neighbors(v) for b in g.neighbors(u) if b in ends}
+        found = {p for qubits, p in places if qubits == checked}
+        if len(found) == 1:
+            pos[v] = found.pop()
 
 
 def _outcome_names(phase: Any) -> list[str]:

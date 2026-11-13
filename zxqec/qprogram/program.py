@@ -140,6 +140,7 @@ class Stage:
     name: str | None = None
     visible: bool = True
     ticks: tuple[int, int] | None = None
+    cross_inside: bool = False      # a permutation whose wires cross between identities on their old and new places
 
     def __str__(self) -> str:
         if self.name:
@@ -272,7 +273,7 @@ class QProgram:
     def add_permutation(self, perm: Sequence[int] | Sequence[Sequence[int]], *,
                         cycles: bool = False, index_base: int = 0,
                         check_topology: bool = False, visible: bool = True,
-                        name: str | None = None) -> int:
+                        cross_inside: bool = False, name: str | None = None) -> int:
         """Append a permutation stage; returns its stage index.
 
         ``perm`` is either one-line notation (``perm[k]`` is the logical qubit
@@ -282,6 +283,11 @@ class QProgram:
         along edges of the topology (under the current mapping), i.e. be
         realisable without routing. ``visible=False`` makes the stage take no
         time and draw as plain crossing wires instead of identity spiders.
+        ``cross_inside=True`` (with ``visible``) gives each wire that moves an
+        identity on its old place too, one tick before the one on its new place,
+        so the stage takes two ticks and its wires cross inside it: drawn on a
+        time axis, the crossing lies between the stage's own ticks, not from
+        the wire's last spider in the stage before. The map is the same.
         """
         one_line = self._to_one_line(perm, cycles, index_base)
         old = list(self._mapping)
@@ -289,7 +295,8 @@ class QProgram:
             self._check_permutation_topology(one_line, old)
         new = [old[one_line[k]] for k in range(self.qubits)]
         st = Stage(len(self._stages), 'permutation', Circuit(self.qubits, bit_amount=self.bits),
-                   tuple(new), perm=tuple(one_line), name=name, visible=visible)
+                   tuple(new), perm=tuple(one_line), name=name, visible=visible,
+                   cross_inside=cross_inside and visible)
         self._mapping = new
         return self._append(st)
 
@@ -886,7 +893,9 @@ class QProgram:
 
         With ``visible=True`` each wire carries a phase-free Z spider on its new
         position (an identity that occupies one tick); otherwise the boundaries
-        are wired directly. Classical bit wires pass straight through.
+        are wired directly. With ``cross_inside`` a wire that moves also carries
+        one on its old position, a tick earlier. Classical bit wires pass
+        straight through.
         """
         assert st.perm is not None
         old = self._stages[st.index - 1].mapping if st.index > 0 else st.mapping
@@ -898,12 +907,23 @@ class QProgram:
         for k, p_old, p_new in wires:
             i = g.add_vertex(VertexType.BOUNDARY, p_old, 0)
             if st.visible and k < self.qubits:
-                m = g.add_vertex(VertexType.Z, p_new, 1)
-                set_timestep(g, m, 0)
+                before = i
+                tick = 0
+                if st.cross_inside:
+                    if p_old != p_new:      # an identity on the old place: the wire crosses after it
+                        a = g.add_vertex(VertexType.Z, p_old, 1)
+                        set_timestep(g, a, 0)
+                        set_delay(g, a, 0)
+                        set_logical_qubit(g, a, k)
+                        g.add_edge((i, a))
+                        before = a
+                    tick = 1
+                m = g.add_vertex(VertexType.Z, p_new, 1 + tick)
+                set_timestep(g, m, tick)
                 set_delay(g, m, 0)
                 set_logical_qubit(g, m, k)
-                g.add_edge((i, m))
-                o = g.add_vertex(VertexType.BOUNDARY, p_new, 2)
+                g.add_edge((before, m))
+                o = g.add_vertex(VertexType.BOUNDARY, p_new, 2 + tick)
                 g.add_edge((m, o))
             else:
                 o = g.add_vertex(VertexType.BOUNDARY, p_new, 1)

@@ -242,3 +242,32 @@ def test_gpf_checks_gives_the_round_of_code_2_as_its_checks():
             checks = {str(g.phase(v)): sorted(ins[u] for u in g.neighbors(v)) for v in g.vertices()
                       if g.type(v) != VertexType.BOUNDARY and v not in ins and v not in outs}
             assert checks == plaquettes
+
+
+def test_gpf_checks_keeps_post_selected_checks_one_spider_each():
+    # with the encoder's results post-selected there is no outcome to pivot on; the checks are read off the
+    # post-selections (postselected_checks) and each stays one spider on its plaquette, as a measured one does,
+    # and the drawing puts it over its ancilla; the map is the same
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'examples'))
+    import interactive_fold_h_3d as fth
+    from zxqec.gpf import equal_for_all_assignments, postselected_checks
+    from zxqec.spacetime import get_logical_qubit
+    from zxqec.spacetime.drawing import _POSITION, _positioned
+    p = fth.build_program(prepare_when_used=True, post_select_encoder=True)
+    assert sorted(sorted(q) for _e, q in postselected_checks(p.stage_graph(0, classical=False))) == \
+        [[1, 2, 4, 5], [1, 4, 7], [2, 3], [5, 6, 8, 9], [7, 8]]
+    level = p.group_stages([(0, 0, 'encode', None, 'gpf_checks')], one_level=True)
+    rb = p.reduced_block(level, 0)
+    g = rb.graph
+    assert equal_for_all_assignments(g, p.block_graph(level, 0, classical=False))
+
+    def checks(h):
+        ends = set(h.inputs()) | set(h.outputs())
+        return {v: sorted({get_logical_qubit(h, b) for u in h.neighbors(v) for b in h.neighbors(u) if b in ends})
+                for v in h.vertices() if v not in ends and not any(u in ends for u in h.neighbors(v))}
+    assert sorted(checks(g).values()) == [[1, 2, 4, 5], [2, 3], [5, 6, 8, 9], [7, 8]]
+    placed = _positioned(p, rb, by_outcomes=True)              # each check over the ancilla that checks it
+    ancilla = {(1.5, 1.5): [1, 2, 4, 5], (2.5, 0.5): [2, 3], (2.5, 2.5): [5, 6, 8, 9], (1.5, 3.5): [7, 8]}
+    assert sorted((tuple(placed.vdata(v, _POSITION)[:2]), q) for v, q in checks(placed).items()) == \
+        sorted(ancilla.items())

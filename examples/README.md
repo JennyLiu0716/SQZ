@@ -29,7 +29,13 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   matched by their place on the chip), level 3 the whole program (H and a Pauli frame). Each stage
   in its normal form on the chip (`gpf_checks`, `draw_blocks_3d`, `save_panels`), and the wiring
   error put back: levels 1 and 2 flag it, level 0 shows the [[9,1,1]] code after stage 5, level 3
-  still says H. Makes every figure of that section (saved to `figures/`) and prints every number.
+  still says H. Makes the figures of the levels appendix (saved to `figures/`); measured ends.
+- [FoldHFigure.ipynb](FoldHFigure.ipynb) — the paper's figure of the fold-transversal H (panels a-d)
+  and the numbers of Section 4.1, for the program with each ancilla prepared in the block that first
+  uses it, a post-selected (phase-free) encoder, a measured decoder, and the turn in two ticks of its own
+  (`build_program(prepare_when_used=True, post_select_encoder=True, cross_inside=True)`): H and a Z
+  that the decoder's results switch on, 313 spiders, 24 detectors. Panel (b) is shaded by block
+  (`draw_program(..., time_scale=2)`).
 - [TInjectionWalkthrough.ipynb](TInjectionWalkthrough.ipynb) — **start here.** The running example
   of the paper, for a reader with no error-correction background: the ideas first (Pauli operators,
   codes, stabilizers, transversal gates, injection) with pictures, then the three questions answered

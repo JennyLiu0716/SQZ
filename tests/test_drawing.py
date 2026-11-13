@@ -353,6 +353,24 @@ def test_block_spans_are_where_draw_program_shades_the_blocks():
         assert [(round(x0, 9), round(x1, 9)) for _label, ranges in spans for x0, x1 in ranges] == shaded
 
 
+def test_draw_program_time_scale():
+    # time_scale stretches the spiders and the shading together: both twice as wide with 2
+    from zxqec.spacetime import block_spans
+    p = _program()
+    def drawn(fig):
+        ax = fig.axes[0]
+        shaded = [(round(a.get_x(), 9), round(a.get_x() + a.get_width(), 9)) for a in ax.patches
+                  if type(a).__name__ == 'Rectangle' and a.get_alpha() == 0.15]
+        xs = sorted(round(c.center[0], 9) for c in ax.patches if hasattr(c, 'center') and hasattr(c, 'radius'))
+        return shaded, xs
+    shaded1, xs1 = drawn(draw_program(p, level=1, show_time=False))
+    shaded2, xs2 = drawn(draw_program(p, level=1, show_time=False, time_scale=2.0))
+    assert shaded2 == [(round(2 * a, 9), round(2 * b, 9)) for a, b in shaded1]
+    assert xs2 == [round(2 * x, 9) for x in xs1]
+    spans = [(round(a, 9), round(b, 9)) for _l, r in block_spans(p, 1, time_scale=2.0) for a, b in r]
+    assert spans == shaded2
+
+
 def test_draw_program_labels_above():
     # labels_above puts every block label above the top row of spiders, in a strip added to the figure;
     # without it the labels are where they were, over the top row
