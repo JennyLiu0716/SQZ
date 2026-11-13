@@ -17,11 +17,11 @@ extraction and tensor check keeps working on the diagrams it produces.
 | `zxqec.tableau` | Import and extract stabilizer tableaus to/from ZX-diagrams: syndrome measurement circuits, stabilizer states, unitary Clifford circuits | planned |
 | `zxqec.topological` | Pauli-box hypergraph normal form (each weight-*w* stabilizer = one off-qubit phase-free X spider on *w* on-qubit phase-free Z spiders, cf. Def. 5.1 of [arXiv:2603.09580](https://arxiv.org/abs/2603.09580)); topological view rendering each hyperedge as a surface/volume coloured by Pauli type (X red, Z green, Y blue, mixed as gradients); toggle between ZX and topological view | planned |
 | `zxqec.gui` | ZXLive embedding for drag-and-drop rewrites after level-up | planned |
-| `examples/` | `QProgramBasics`, `FoldTransversalHadamard` (case study 1 with syndrome measurement: logical `H` + Pauli frame + detectors); magic state injection, distillation and cultivation | first two done |
+| `examples/` | `QProgramBasics`, `FoldTransversalHadamard` (the fold-transversal Hadamard with syndrome measurement: logical `H` + Pauli frame + detectors); magic state injection, distillation and cultivation | first two done |
 
 The 1+1D time layer (per-spider `timestep`/`delay` vertex data, ASAP
-scheduling, space-time cost metrics, `time_slice`) lives upstream in
-`pyzx.spacetime`; this library builds the second spatial dimension and the
+scheduling, space-time cost metrics, `time_slice`) lives in
+`pyzx.spacetime` (in the bundled PyZX snapshot); this library builds the second spatial dimension and the
 protocol-level abstractions on top of it.
 
 ## A first look

@@ -1,4 +1,4 @@
-"""Open the 2+1D view of case study 1 (fold-transversal Hadamard) in an interactive window.
+"""Open the 2+1D view of the fold-transversal Hadamard in an interactive window.
 
 The protocol is the one of ``FoldTransversalHadamard.ipynb``: the 19-qubit
 distance-3 surface code, an X-check round, a transversal Hadamard, a QEC round
