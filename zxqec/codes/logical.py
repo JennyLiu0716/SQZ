@@ -311,6 +311,8 @@ class LogicalAction:
     normal_forms: tuple[Any, Any] | None = field(default=None, repr=False)   #: (in, out), with 'iapnf'
     u_o_cancelled: bool | None = None          #: with 'iapnf': the two U_O cancelled (diagonal block)
     _core: Any = field(default=None, repr=False)
+    route: str = 'flow'                        #: 'flow' (the paper's flow chart) or 'matrix' (every class as a matrix)
+    named_by: dict = field(default_factory=lambda: {'flow': 0, 'matrix': 0}, repr=False)  #: classes per route
 
     def on_core(self) -> 'LogicalAction':
         """The block's action on the CSS cores alone: the composite without the ``U_I`` layers.
@@ -400,13 +402,176 @@ class LogicalAction:
         return measurement_report(self.composite if self.composite is not None else self.graph,
                                   result=self.result)
 
-    def matrix(self, outcomes: dict[str, int]) -> np.ndarray:
-        """The ``2^k_out x 2^k_in`` matrix of one branch, scaled to unit largest singular value."""
+    def tableau(self) -> Any:
+        """The logical gate as a Clifford tableau, read without a matrix (:func:`~zxqec.codes.clifford_tableau`).
+
+        Where the gate sends each logical ``X`` and ``Z``, with signs that are
+        Boolean polynomials in the outcomes (the Pauli frame of every run at once),
+        read off the Choi state of the reduced diagram by Gaussian elimination: the
+        cost is polynomial in the number of logical qubits, where :meth:`branches`
+        builds a ``2^k x 2^k`` matrix per class of runs. The phases are first
+        written modulo the detectors of the block and of its context, so a sign
+        that the program fixes reads as its value.
+        :meth:`~zxqec.codes.CliffordTableau.name` names the gate. Raises
+        :class:`~zxqec.codes.NotCliffordError` when the gate is not Clifford or a
+        Clifford phase depends on an outcome; :meth:`branches` remains the default
+        and covers every case.
+        """
+        from .tableau import clifford_tableau
+        return clifford_tableau(self._modulo_detectors())
+
+    def clifford_part(self) -> Any:
+        """The logical gate as a Clifford isometry followed by phase effects (:func:`~zxqec.codes.clifford_plus_phases`).
+
+        The non-Clifford phases of the reduced diagram are taken off its gadgets
+        as extra outputs; what is left is Clifford, and its tableau and isometry AP
+        normal form are read as in :meth:`tableau`. This is the form of the paper's
+        proposition on Clifford isometries followed by phases.
+        """
+        from .tableau import clifford_plus_phases
+        return clifford_plus_phases(self._modulo_detectors())
+
+    def with_route(self, route: str) -> 'LogicalAction':
+        """A copy that names its classes of runs another way: ``'flow'`` (default) or ``'matrix'`` (every class as a
+        matrix, as before the flow was followed). Both give the same answers; use it to compare them."""
+        import dataclasses
+        if route not in ('flow', 'matrix'):
+            raise ValueError("route must be 'flow' or 'matrix', not {!r}".format(route))
+        return dataclasses.replace(self, _branches=None, route=route, named_by={'flow': 0, 'matrix': 0})
+
+    def path(self) -> str:
+        """Which branch of the decompilation flow (the paper's flow chart) this logical gate takes.
+
+        * Clifford and an isometry: named from the stabilizers of its Choi state,
+          which give its tableau (:meth:`tableau`) and its isometry AP normal form
+          (:meth:`normal_form`);
+        * Clifford and not an isometry (a block that measures or projects): named
+          from the stabilizers of its Choi state; :meth:`normal_form` gives the
+          reduced AP form of that state;
+        * not Clifford: a Clifford isometry followed by phase effects
+          (:meth:`clifford_part`), whose phases were added up by the reduction (the
+          triorthogonal rewrites); named by its matrix.
+
+        With ``route='matrix'`` every class is named by its matrix, whatever the path.
+        """
+        from . import flow
+        from .tableau import NotCliffordError
+        g = self._modulo_detectors()
+        if not flow.is_clifford_graph(g):
+            return "not Clifford: a Clifford isometry followed by phase effects; named by its matrix"
+        try:
+            self.tableau()
+        except NotCliffordError:
+            return "not Clifford: a Clifford isometry followed by phase effects; named by its matrix"
+        except (ValueError, NotImplementedError):
+            return "Clifford, not an isometry: named from the stabilizers of its Choi state (AP form)"
+        return "Clifford isometry: named from the stabilizers of its Choi state (tableau, iAPNF)"
+
+    def normal_form(self) -> Any:
+        """The normal form of a Clifford logical gate, as the flow chart asks for it.
+
+        For an isometry, its isometry AP normal form
+        (:func:`~zxqec.codes.iap_normal_form`); otherwise, for example a block that
+        measures, the reduced AP form of its Choi state (outputs, then the bent
+        inputs, named ``in0, in1, ...``; :class:`~zxqec.codes.APForm`). Signs may be
+        Boolean polynomials in outcomes. Raises
+        :class:`~zxqec.codes.NotCliffordError` for a non-Clifford gate, whose
+        Clifford part :meth:`clifford_part` gives instead.
+        """
+        from .iapnf import _Pauli, _reduced_ap_form, iap_normal_form
+        from .tableau import NotCliffordError, _check_clifford, _choi_generators
+        g = self._modulo_detectors()
+        _check_clifford(g)
+        try:
+            self.tableau()
+            return iap_normal_form(g, generators='echelon')
+        except NotCliffordError:
+            raise
+        except (ValueError, NotImplementedError):
+            gens = [_Pauli.of(p) for p in _choi_generators(g)]
+            labels = (tuple(str(j) for j in range(self.k_out))
+                      + tuple('in{}'.format(i) for i in range(self.k_in)))
+            return _reduced_ap_form(gens, labels)
+
+    def _modulo_detectors(self) -> BaseGraph:
+        from ..gpf import phases_modulo
+        g = self.graph
+        constraints = list(self.detectors) + list(self.context)
+        h = phases_modulo(g, constraints) if constraints and boolean_variables(g) else g.copy()
+        h.scalar = Scalar()
+        return h
+
+    def _substituted(self, outcomes: dict[str, int]) -> BaseGraph:
+        """The reduced diagram in one run: every result given its value (0 if ``outcomes`` does not say)."""
         g = self.graph
         names = boolean_variables(g)
         a = {n: outcomes.get(n, 0) for n in names}
         h = g.substitute_variables(a) if names else g.copy()
-        h.scalar = Scalar()               # scaled below anyway; a symbolic scalar phase cannot be evaluated
+        h.scalar = Scalar()               # scaled anyway; a symbolic scalar phase cannot be evaluated
+        return h
+
+    def _describe(self, outcomes: dict[str, int]) -> Any:
+        """One class of runs, as the flow chart reads it: a Clifford map by the stabilizers of its Choi state
+        (:mod:`~zxqec.codes.flow`, no matrix), anything else by its matrix (with ``route='matrix'``, always)."""
+        from . import flow
+        if self.route == 'flow' and (self.k_in or self.k_out):
+            h = self._substituted(outcomes)
+            if flow.is_clifford_graph(h):
+                try:
+                    d = flow.stab_map_of(h, self.k_in, self.k_out)
+                except (ValueError, NotImplementedError):      # the zero map: as before, by its matrix
+                    d = None
+                if d is not None:
+                    d.a = outcomes
+                    self.named_by['flow'] += 1
+                    return d
+        self.named_by['matrix'] += 1
+        return _ClassMatrix(outcomes, self.matrix(outcomes))
+
+    def _name_desc(self, d: Any) -> tuple[str | None, str, str]:
+        """As :meth:`_name`, for a class read either way."""
+        from . import flow
+        if not isinstance(d, flow.StabMap):
+            return self._name(d.m)
+        op, pout, pin = flow.identify(d)
+        if op is not None:
+            return op, pout, pin
+        parts = self.parts()
+        if len(parts) < 2:
+            return None, '', ''
+        factors = flow.factorise(d, [(i, o) for i, o, _ in parts])
+        if factors is None:
+            return None, '', ''
+        names = []
+        full_out, full_in = ['I'] * self.k_out, ['I'] * self.k_in
+        for (ins, outs, where), f in zip(parts, factors):
+            fo, fout, fin = flow.identify(f) if (f.k_in or f.k_out) else (None, '', '')
+            if fo is None:
+                return None, '', ''
+            names.append("{} on {}".format(fo, where))
+            for i, c in zip(outs, fout):
+                full_out[i] = c
+            for i, c in zip(ins, fin):
+                full_in[i] = c
+        return " (x) ".join(names), "".join(full_out), "".join(full_in)
+
+    def _relate_desc(self, d: Any, ref: Any, effect_inputs: list[int]) -> tuple[str, str] | None:
+        from . import flow
+        if isinstance(d, flow.StabMap) and isinstance(ref, flow.StabMap):
+            return flow.relating_pauli(d, ref, effect_inputs)
+        m = d.m if isinstance(d, _ClassMatrix) else self.matrix(d.a)
+        r = ref.m if isinstance(ref, _ClassMatrix) else self.matrix(ref.a)
+        return _relating_pauli(m, r, self.k_in, self.k_out, effect_inputs)
+
+    def _unitary_desc(self, d: Any) -> bool:
+        from . import flow
+        if isinstance(d, flow.StabMap):
+            return flow.is_unitary(d)
+        return _is_unitary(d.m, self.k_in, self.k_out)
+
+    def matrix(self, outcomes: dict[str, int]) -> np.ndarray:
+        """The ``2^k_out x 2^k_in`` matrix of one branch, scaled to unit largest singular value."""
+        h = self._substituted(outcomes)
         m = np.asarray(h.to_matrix(preserve_scalar=False)).reshape(2 ** self.k_out, 2 ** self.k_in)
         s = np.linalg.norm(m, 2)
         return m / s if s > 1e-12 else m
@@ -447,7 +612,7 @@ class LogicalAction:
                     a = sample_consistent_assignment(constraints + targets, names, _rng(values))
                 except ValueError:                 # the linear system has no solution: no such run
                     continue
-                runs.append((values, a, self.matrix(a)))
+                runs.append((values, a, self._describe(a)))
         else:
             # a phase or a detector with a product of outcomes (a correction "if c[0] = 1 and c[1] = 0", a
             # condition on the whole register) cannot be solved for over GF(2): list the runs the linear
@@ -466,20 +631,20 @@ class LogicalAction:
                 values = tuple(evaluate_phase(p, a) for p in plist)
                 if values not in best or sum(a.values()) < sum(best[values].values()):
                     best[values] = a
-            runs = [(values, a, self.matrix(a)) for values, a in sorted(best.items())]
+            runs = [(values, a, self._describe(a)) for values, a in sorted(best.items())]
         out = []
         if runs:
             ref = runs[0][2]
-            ref_op, ref_out, ref_in = self._name(ref)
+            ref_op, ref_out, ref_in = self._name_desc(ref)
             effect_inputs = [i for ins, outs, _w in self.parts() if not outs for i in ins]
             for values, a, m in runs:
-                rel = _relating_pauli(m, ref, self.k_in, self.k_out, effect_inputs)
+                rel = self._relate_desc(m, ref, effect_inputs)
                 if rel is not None:
                     op, pout, pin = ref_op, _times(rel[0], ref_out), _times(rel[1], ref_in)
                 else:
-                    op, pout, pin = self._name(m)
+                    op, pout, pin = self._name_desc(m)
                 whole = op is not None and ' (x) ' not in op
-                out.append(Branch(a, op, self._render(pout, pin, whole), _is_unitary(m, self.k_in, self.k_out),
+                out.append(Branch(a, op, self._render(pout, pin, whole), self._unitary_desc(m),
                                   [(str(p), v) for p, v in zip(plist, values)], rel is not None))
         self._branches = out
         return out
@@ -651,6 +816,13 @@ class LogicalAction:
 
 
 # -- naming small operations -------------------------------------------------------------------
+
+@dataclass
+class _ClassMatrix:
+    """One class of runs named by its matrix (a non-Clifford class, the zero map, or ``route='matrix'``)."""
+    a: dict
+    m: np.ndarray
+
 
 _I = np.eye(2)
 _X = np.array([[0, 1], [1, 0]])

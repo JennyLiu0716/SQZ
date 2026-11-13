@@ -83,7 +83,7 @@ def test_eq_6_42_on_logical_qubits_rewrites_to_a_cx_and_the_ancillas_t_in_0():
     assert p.logical_action().verdict() == 'deterministic: every run implements CNOT(0->1)'
     steps = to_gpf_steps(p.quantum_graph())
     last = steps[-1][1]
-    assert [len([v for v in h.vertices() if h.type(v) != VertexType.BOUNDARY]) for _, h in steps] == [33, 14, 12, 12, 4, 5]
+    assert [len([v for v in h.vertices() if h.type(v) != VertexType.BOUNDARY]) for _, h in steps] == [33, 11, 9, 9, 4, 5]   # step 1 copies the fresh |0> away (14, 12, 12 before)
     assert _wiring(last) == [(0, (0, 1)), (1, (1,))]            # c onto c and t, t onto t: a CX
     xs = [v for v in last.vertices() if last.type(v) == VertexType.X]
     assert len(xs) == 3 and all(last.phase(v) == 0 for v in last.vertices())   # the third X-spider: |0> on output 2

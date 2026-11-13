@@ -62,6 +62,38 @@ def test_draw_graph_names_a_spider_just_left_of_it():
     plt.close('all')
 
 
+def test_draw_graph_clear_labels_cover_no_edge_spider_or_label():
+    import matplotlib.pyplot as plt
+    from matplotlib.path import Path
+    from matplotlib.transforms import Bbox
+    from zxqec.gpf import to_gpf
+    c = Circuit(3)
+    for q in (0, 1):
+        c.add_gate('CNOT', q, 2)
+    c.add_gate('T', 2)
+    c.add_gate('T', 0)
+    for q in (0, 1):
+        c.add_gate('CNOT', q, 2)
+    g = to_gpf(c.to_graph())
+    spiders = [next(iter(g.neighbors(b))) for b in g.inputs()]
+    names = {v: 'in{}'.format(i) for i, v in enumerate(spiders)}
+    fig = draw_graph(g, time_axis=False, show_time=False, names=names, label_size=9, label_side='clear')
+    ax = fig.axes[0]
+    fig.draw_without_rendering()
+    inv = ax.transData.inverted()
+    boxes = {t.get_text(): Bbox(inv.transform(t.get_window_extent().get_points())) for t in ax.texts}
+    assert set(names.values()) <= set(boxes) and any('π/4' in s or 'pi' in s for s in boxes)
+    shapes = [Path(line.get_xydata()) for line in ax.lines]
+    shapes += [p.get_patch_transform().transform_path(p.get_path()) for p in ax.patches]
+    for text, box in boxes.items():
+        assert not any(s.intersects_bbox(box, filled=True) for s in shapes), text
+        assert not any(box.overlaps(o) for t, o in boxes.items() if t != text), text
+    for v, name in names.items():                  # each name stays near its spider
+        cx, cy = boxes[name].x0 + boxes[name].width / 2, boxes[name].y0 + boxes[name].height / 2
+        assert abs(cx - g.row(v)) < 2.5 and abs(cy + g.qubit(v)) < 1.5
+    plt.close('all')
+
+
 def test_draw_graph_names_the_right_spider_on_the_time_axis_after_a_vertex_is_gone():
     # with time_axis=True the drawing is of a copy, numbered afresh; a gap in g's numbering must not move names
     import matplotlib.pyplot as plt
@@ -449,4 +481,31 @@ def test_a_stage_flat_on_the_layout():
     assert bare.title.get_text() == 'H' and box.y1 <= fig.bbox.y1 + 1      # the title is inside the figure
     with pytest.raises(ValueError):
         draw_stage_layout(p, 0, wires=[])
+    plt.close('all')
+
+
+def test_draw_graph_phases_constant_keeps_numbers_and_drops_phases_with_variables():
+    import matplotlib.pyplot as plt
+    from fractions import Fraction
+    from pyzx.graph import Graph
+    from pyzx.symbolic import new_var
+    from pyzx.utils import VertexType
+    g = Graph()
+    a = g.add_vertex(VertexType.Z, qubit=0, row=0, phase=Fraction(7, 4))
+    b = g.add_vertex(VertexType.X, qubit=1, row=1)
+    g.set_phase(b, new_var('c', True, g.var_registry) + 1)
+    g.add_edge((a, b))
+
+    def blue(fig):
+        return sorted(t.get_text() for t in fig.axes[0].texts if t.get_color() == 'blue')
+
+    every = blue(draw_graph(g, time_axis=False, show_time=False))
+    assert len(every) == 2 and '7π/4' in every                                  # the default is unchanged
+    assert blue(draw_graph(g, time_axis=False, show_time=False, phases='constant')) == ['7π/4']
+    assert blue(draw_graph(g, time_axis=False, show_time=False, phases='none', label_size=9)) == []
+    with pytest.raises(ValueError):
+        draw_graph(g, time_axis=False, show_time=False, phases='some')
+    fig = draw_graph(g, time_axis=False, show_time=False, names_right={b: 'g1'}, phases='constant')
+    (text,) = [t for t in fig.axes[0].texts if t.get_text() == 'g1']
+    assert text.get_position()[0] > g.row(b) and text.get_horizontalalignment() == 'left'
     plt.close('all')

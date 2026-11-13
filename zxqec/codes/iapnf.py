@@ -371,17 +371,20 @@ def _phase_str(v: Any) -> str:
 
 # -- computing it ---------------------------------------------------------------------------------
 
-def iap_normal_form(e: Any) -> IAPNormalForm:
+def iap_normal_form(e: Any, generators: str = 'lightest') -> IAPNormalForm:
     """The isometry AP normal form of a Clifford isometry (see the module docstring).
 
     ``e`` is a :class:`~zxqec.codes.StabilizerCode` (its ideal encoder) or a
     ZX-diagram of a Clifford isometry, from its inputs to its outputs, whose
     code :func:`~zxqec.codes.code_of` can read (Boolean phases allowed). A
-    diagram is read through its Choi state, so :func:`~zxqec.codes.code_of`'s
-    limits apply (for instance, at most 14 independent parities read by
-    ``pi/2`` gadgets); a code has no such limit.
+    diagram is read through its Choi state with :func:`~zxqec.codes.code_of`,
+    which is Gaussian elimination for a Clifford diagram. ``generators`` is passed
+    to it: the normal form does not depend on it (only how a sign that depends on
+    outcomes is written may differ, e.g. ``c[2] + 2`` for ``c[2]``), but
+    ``'lightest'`` (default) lists the stabilizer group (up to ``2^16`` elements)
+    and ``'echelon'`` does not, so ``'echelon'`` keeps the whole step polynomial.
     """
-    n, k, stabs, lx, lz, qubits = _isometry_of(e)
+    n, k, stabs, lx, lz, qubits = _isometry_of(e, generators)
     labels = tuple('in{}'.format(i) for i in range(k)) + tuple(str(q) for q in qubits)
     return _from_ap_form(_reduced_ap_form(_choi(n, k, stabs, lx, lz), labels), n, k, qubits)
 
@@ -399,18 +402,18 @@ def reduced_ap_form(e: Any) -> APForm:
     return _reduced_ap_form(_choi(n, k, stabs, lx, lz), labels)
 
 
-def _isometry_of(e: Any) -> tuple[int, int, list[_Pauli], list[_Pauli], list[_Pauli], tuple[Any, ...]]:
+def _isometry_of(e: Any, generators: str = 'lightest') -> tuple[int, int, list[_Pauli], list[_Pauli], list[_Pauli], tuple[Any, ...]]:
     from .code import StabilizerCode
     if isinstance(e, StabilizerCode):
         return (e.n, e.k, [_Pauli.of(p) for p in e.stabilizers], [_Pauli.of(p) for p in e.logical_x],
                 [_Pauli.of(p) for p in e.logical_z], tuple(e.qubits))
     if isinstance(e, BaseGraph):
-        n, k, stabs, lx, lz = _from_diagram(e)
+        n, k, stabs, lx, lz = _from_diagram(e, generators)
         return n, k, stabs, lx, lz, tuple(range(n))
     raise TypeError("expected a StabilizerCode or a ZX-diagram, not {}".format(type(e).__name__))
 
 
-def _from_diagram(g: BaseGraph) -> tuple[int, int, list[_Pauli], list[_Pauli], list[_Pauli]]:
+def _from_diagram(g: BaseGraph, generators: str = 'lightest') -> tuple[int, int, list[_Pauli], list[_Pauli], list[_Pauli]]:
     """The code and logical operators of the isometry ``g``, read off its Choi state.
 
     The Choi state ``sum_x |x> (x) E|x>`` is stabilized by ``I (x) s`` for the
@@ -421,7 +424,7 @@ def _from_diagram(g: BaseGraph) -> tuple[int, int, list[_Pauli], list[_Pauli], l
     choi = g.copy()
     choi.set_outputs(tuple(choi.outputs()) + tuple(choi.inputs()))
     choi.set_inputs(())
-    state = code_of(choi)
+    state = code_of(choi, generators=generators)
     if state.k:
         raise ValueError("the diagram is not an isometry: its Choi state is not a stabilizer state")
     gens = [_Pauli.of(p) for p in state.stabilizers]

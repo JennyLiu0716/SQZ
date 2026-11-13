@@ -14,6 +14,7 @@ from pyzx.circuit.gates import CNOT, CZ, HAD, Measurement, Reset, T
 from zxqec.qprogram import ParityControlled, QProgram, error_formulas, pauli_errors, program_from_stim
 from zxqec.qprogram import faults as faults_module
 
+PATH_D3 = os.path.join(os.path.dirname(__file__), '..', 'examples', 'circuits', 'cultivation', 'd3_cultivation.stim')
 PATH_D5 = os.path.join(os.path.dirname(__file__), '..', 'examples', 'circuits', 'cultivation', 'd5_cultivation.stim')
 
 
@@ -392,6 +393,48 @@ def test_a_verdict_does_not_depend_on_the_size_of_the_tensors(monkeypatch, facto
     for e, share in zip(errors, shares):
         assert ef.outcomes(e) == pytest.approx(share)
     assert pauli_errors(p, 1, [0, 1, 2], letter='X').counts == counts
+
+
+def test_d3_cultivation_a_y_after_a_reset_is_its_x():
+    # Y|0> = i X|0>, so a Y right after a reset is the X there. Written as PyZX's Y (S X S^dag), between an RX reset
+    # and its H, the reduced diagram kept 108 spiders (20 with the X) and a tensor about 1e12 times smaller than the
+    # noiseless one: classify_directly counted every run as zero and said 'caught'.
+    p, _circuit_d3 = program_from_stim(open(PATH_D3).read())
+    ef = error_formulas(p)
+    assert (ef.places[2].name, ef.places[2].qubit, ef.places[35].qubit) == ('Reset', 4, 8)
+    for letter in 'XY':
+        errors = {2: letter, 35: 'Z'}                  # and a Z on qubit 8 after a CNOT
+        assert ef.classify(errors) == ef.classify_directly(errors) == 'harmless', errors
+    # zero maps in every run that passes the checks. With PyZX's Y their reduced diagrams (86 to 104 spiders) have
+    # detectors that miss it, and only their size next to the noiseless runs shows it; with Z then X they are caught
+    for errors in ({8: 'X', 80: 'Y'}, {8: 'Y', 80: 'X'}, {39: 'Z', 80: 'Y'}):
+        assert ef.classify(errors) == ef.classify_directly(errors) == 'caught', errors
+
+
+@pytest.mark.parametrize('gate', ['S', 'T'])
+def test_d3_cultivation_with_a_phase_after_a_reset_reduces_like_the_program(gate):
+    # S|0> = T|0> = |0>: the gate right after the RX reset of qubit 4 (before its H) changes nothing. Before to_gpf
+    # copied basis states, its phase went onto a gadget that the skeleton steps cannot remove: the reduced diagram
+    # kept 103 spiders, the detectors had rank 24, code_at raised OutcomeDependentCodeError, and single faults the
+    # checks catch were called 'wrong' (a fault distance of 1)
+    from pyzx.circuit.gates import S, T
+    from pyzx.utils import VertexType
+    from zxqec.gpf import detector_rank, reduce_gpf
+    p0, _circuit_d3 = program_from_stim(open(PATH_D3).read())
+    extra = {'S': S, 'T': T}[gate](4)
+    p = faults_module._copy(p0, lambda stage, j, g: [extra] if (stage, j) == (0, 2) else [])
+    for program in (p0, p):
+        r = reduce_gpf(program.quantum_graph())
+        assert sum(1 for v in r.graph.vertices() if r.graph.type(v) != VertexType.BOUNDARY) == 13
+        assert detector_rank(r.detectors) == 28
+    last = p.num_stages - 1
+    assert p.code_at(last).same_code_as(p0.code_at(last))
+    ef = error_formulas(p, code_out=p0.code_at(last))
+    assert (ef.places[2].name, ef.places[3].name, ef.places[3].qubit) == ('Reset', gate, 4)
+    assert ef.classify({}) == 'harmless'
+    # three single faults, and the three PyZX-Y pairs of the test above (one place later here); all are caught
+    for errors in ({204: 'X'}, {265: 'Y'}, {270: 'Z'}, {9: 'X', 81: 'Y'}, {9: 'Y', 81: 'X'}, {40: 'Z', 81: 'Y'}):
+        assert ef.classify(errors) == ef.classify_directly(errors) == 'caught', errors
 
 
 def test_d5_cultivation_passes_the_final_check():

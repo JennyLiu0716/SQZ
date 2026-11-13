@@ -34,8 +34,12 @@ from .code import (CodeLayers, NotACodeError, OutcomeDependentCodeError, Stabili
 from .iapnf import APForm, IAPNormalForm, iap_normal_form, reduced_ap_form
 from .logical import Branch, LogicalAction, glue, logical_action
 from .pauli import PauliString, phase_sum
+from . import flow
+from .tableau import (CliffordPlusPhases, CliffordTableau, NotCliffordError, clifford_plus_phases,
+                      clifford_tableau)
 
 __all__ = ['StabilizerCode', 'NotACodeError', 'OutcomeDependentCodeError', 'code_of', 'code_layers', 'CodeLayers',
            'stabilizes', 'PauliString', 'phase_sum',
            'logical_action', 'LogicalAction', 'Branch', 'glue', 'iap_normal_form', 'IAPNormalForm',
-           'reduced_ap_form', 'APForm', 'check_diagram', 'surface_code_checks']
+           'reduced_ap_form', 'APForm', 'check_diagram', 'surface_code_checks',
+           'clifford_tableau', 'CliffordTableau', 'clifford_plus_phases', 'CliffordPlusPhases', 'NotCliffordError']

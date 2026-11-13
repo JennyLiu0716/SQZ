@@ -48,7 +48,7 @@ from typing import Any
 
 from pyzx.graph.base import BaseGraph, VT, ET
 from pyzx.rewrite_rules import bialgebra, check_bialgebra
-from pyzx.simplify import hopf_simp, id_simp, spider_simp
+from pyzx.simplify import copy_simp, hopf_simp, id_simp, spider_simp
 from pyzx.utils import EdgeType, VertexType, is_pauli, toggle_vertex
 
 from .hadamard import push_hadamards_to_boundary, restore_boundary_hadamards
@@ -163,16 +163,25 @@ def _to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool, max_steps: int | None, c
 
 
 def _presimplify(g: BaseGraph[VT, ET]) -> None:
-    """Remove identity spiders and fuse same-colour neighbours, to a fixpoint.
+    """Remove identity spiders, fuse same-colour neighbours and copy basis states, to a fixpoint.
 
-    Run before :func:`push_hadamards_to_boundary`, because both are equalities
+    Run before :func:`push_hadamards_to_boundary`, because all three are equalities
     that can only shrink the cycle space: a diagram whose only odd-Hadamard
     cycle runs through an identity spider is accepted after this, although the
     diagram as drawn would be rejected.
+
+    The copy rule (PyZX's) takes a degree-one spider with phase 0 or pi (a ``|0>``,
+    ``|1>``, ``|+>`` or ``|->``) through the spider of the other colour next to it,
+    whose phase goes into the scalar. So a phase on a fresh qubit, such as an ``S``
+    or ``T`` right after a reset, where it does nothing, is gone before phases are
+    moved onto gadgets. Without the copy rule, on d = 3 cultivation with an ``S``
+    after an RX reset, :func:`~zxqec.gpf.reduce_gpf` stopped at 103 spiders and
+    detectors of rank 24 (13 spiders and rank 28 without the ``S``).
     """
     while True:
         changed = bool(id_simp(g))
         changed |= bool(spider_simp(g))
+        changed |= bool(copy_simp(g))
         if not changed:
             return
 

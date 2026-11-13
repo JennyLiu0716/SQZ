@@ -421,14 +421,17 @@ class ErrorFormulas:
 
     def program_with(self, errors: dict[int, str]) -> QProgram:
         """The program with the error gates of ``errors`` (``'X'``, ``'Y'`` or ``'Z'`` at a place) put in after their
-        gates: the program that :meth:`classify_directly` reduces."""
+        gates: the program that :meth:`classify_directly` reduces, there with each ``Y`` as ``Z`` then ``X``."""
+        return self._program_with(errors)
+
+    def _program_with(self, errors: dict[int, str], y_as_zx: bool = False) -> QProgram:
         from pyzx.circuit.gates import NOT, Y, Z
         self.switches(errors)                                # the letters are checked there
-        gate = {'X': NOT, 'Y': Y, 'Z': Z}
+        gates = {'X': [NOT], 'Y': [Z, NOT] if y_as_zx else [Y], 'Z': [Z]}
         at: dict[tuple[int, int], list[Any]] = {}
         for k, letter in sorted(errors.items()):
             place = self.places[k]
-            at.setdefault((place.stage, place.gate), []).append(gate[letter](place.qubit))
+            at.setdefault((place.stage, place.gate), []).extend(gate(place.qubit) for gate in gates[letter])
         return _copy(self.program, lambda stage, j, g: at.get((stage, j), []))
 
     def _places_at(self) -> dict[tuple[int, int], list[Place]]:
@@ -524,9 +527,16 @@ class ErrorFormulas:
         noiseless program are taken on its results only: a constraint on a value
         that a reset throws away (a reset variable) holds for the noiseless program,
         not for the noisy one, whose own constraints come from its reduction.
+
+        A ``Y`` is put in as ``Z`` then ``X``, the same map up to a phase. PyZX's ``Y``
+        gate is ``S X S^dag``, and its quarter turns can keep the diagram from reducing
+        as the noiseless one does: right after a reset that is followed by an ``H``, the
+        d = 3 cultivation diagram kept 108 spiders instead of 20, and its tensor was
+        about 1e12 times smaller. Whether a run is zero is decided by its size next to
+        the noiseless runs (:func:`_zero_size`), so every run of it counted as zero.
         """
         from ..gpf import reduce_gpf, unsatisfiable
-        res = reduce_gpf(self.program_with(errors).quantum_graph())
+        res = reduce_gpf(self._program_with(errors, y_as_zx=True).quantum_graph())
         checks = self._checks + list(res.detectors)
         if res.is_zero or unsatisfiable(checks):
             return 'caught'
@@ -766,6 +776,11 @@ def _zero_size(noiseless: dict[Any, tuple[Any, float]]) -> float:
     for d = 3 cultivation and 4e-12 for d = 5, and the rounding errors of a zero map lie some 16 orders of magnitude
     below the map. So the size is taken relative to the largest noiseless run, one number for every pattern: a
     pattern whose runs are all zero (it always fails the final check) must not be measured against itself.
+
+    This compares two reduced diagrams, and :func:`~zxqec.gpf.reduce_gpf` keeps a map only up to a scalar that
+    depends on how far the diagram reduces. With Pauli error gates, in about 2,800 patterns of d = 3 and d = 5
+    cultivation, the largest run of a noisy map was 1/8 to 1 times the noiseless one, or exactly 0. A quarter turn
+    made it 1e12 times smaller (see :meth:`ErrorFormulas.classify_directly`).
     """
     return 1e-9 * max((size for _choi, size in noiseless.values()), default=0.0)
 

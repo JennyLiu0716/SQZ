@@ -46,7 +46,10 @@
 * :func:`error_formulas` -- a Pauli error after every gate as Boolean switches, pushed
   to the results and outputs and reduced once: which detectors each error flips,
   every single error sorted the same way, the fewest wrong faults (the fault distance)
-  and sampling with a probability per gate, with ``T`` gates included.
+  and sampling with a probability per gate, with ``T`` gates included;
+* :func:`search_lowest_wrong` -- the fewest faults that are wrong, proposed by a solver
+  (OR-Tools, optional) and decided by :meth:`ErrorFormulas.classify`, for programs where
+  trying every pattern is too slow; :func:`branch_model` is what the solver is told.
 """
 
 from .compare import BlockComparison, ProgramComparison, compare_programs
@@ -57,6 +60,7 @@ from .distance_check import DistanceCheck, GroupCheck, SplitProgram, check_dista
 from .corrections import Corrections, find_corrections
 from .errors import PauliErrors, pauli_errors
 from .faults import ErrorFormulas, Place, TFlip, error_formulas
+from .fault_search import BranchModel, Candidate, SearchResult, SolveRecord, branch_model, search_lowest_wrong
 from .feedforward import ParityControlled
 from .levels import Block, LevelManager
 from .program import QProgram, Stage, same_layer
@@ -71,4 +75,5 @@ __all__ = ['QProgram', 'Stage', 'same_layer', 'Block', 'LevelManager', 'ParityCo
            'without_gates', 'z_distance_through_t', 'REWRITES', 'ReducedBlock', 'ReducedLevel', 'register_rewrite',
            'check_distance', 'split_by_gate_type', 'SplitProgram', 'GroupCheck', 'DistanceCheck',
            'PauliErrors', 'pauli_errors', 'Corrections', 'find_corrections',
-           'ErrorFormulas', 'Place', 'TFlip', 'error_formulas']
+           'ErrorFormulas', 'Place', 'TFlip', 'error_formulas',
+           'BranchModel', 'Candidate', 'SearchResult', 'SolveRecord', 'branch_model', 'search_lowest_wrong']

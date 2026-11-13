@@ -77,6 +77,16 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   all 48 are caught or harmless. The checks come from the diagram (`check_detectors`: the same 26 as the file),
   rates come from random faults without simulation, and every verdict is checked the slow way. A small two-round
   example shows the idea first.
+- [CultivationFaultsD3.ipynb](CultivationFaultsD3.ipynb) — the same question with every Pauli fault after every
+  gate (X, Y or Z after a one-qubit gate, any of the 15 two-qubit Paulis after a CNOT), in one reduced diagram,
+  and a solver (`search_lowest_wrong`) that finds the fewest faults that are wrong: 2 with real T gates (3 with S in
+  place of T), with a witness and why it is wrong. `all_wrong=True` lists the 12 wrong signatures; trying every pair
+  finds 48 wrong pairs, with exactly these signatures. The reduced diagram is drawn in 3D on the Steane triangle
+  (`draw_code_3d`).
+- [CultivationFaultsD5.ipynb](CultivationFaultsD5.ipynb) — the same at d = 5 (42 qubits, 888 gates, 53 T gates):
+  all 8109 single faults and all 33 million pairs tried the fast way, none wrong; the solver finds a wrong set of 3
+  faults, and `classify` and `classify_directly` both call it wrong. So the fault distance is 3 with real T gates
+  (4 with S in place of T). The machine's load is printed before and after the long steps.
 - [interactive_cultivation_3d.py](interactive_cultivation_3d.py) — step 4 of that reduction in an
   interactive window, drawn with `draw_graph_3d` on three planes: the non-Clifford state T†|+⟩, the
   Z-layer, and the seven output X-spiders on the textbook triangle of the Steane code (given as a
@@ -93,6 +103,11 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   every one of the 1024 runs its detectors allow, against T†|+⟩ in the colour code of the faces
   (Part 6 of `Cultivation.ipynb` does 4); about nine hours on a laptop, `--start`/`--end` to split
   the runs, `--log FILE`. All 1024 are equal.
+- [DecompilationFlow.ipynb](DecompilationFlow.ipynb) — L. Yeh's decompilation flow chart (Section 5 of the paper),
+  box by box: a Clifford gate read as its tableau and isometry AP normal form (fold-transversal H, with the Pauli
+  frame as a formula in the results); a block that measures read from the AP form of its Choi state; transversal
+  T on the [[15,1,3]] code split into a Clifford part and one phase effect (`clifford_part`); and a test that the
+  chart's way and the matrix way give the same answers on every block of four programs (`with_route`, `named_by`).
 - [StabilizerCodes.ipynb](StabilizerCodes.ipynb) — the three questions for codes that are not CSS. The
   [[5,1,3]] code read off a ring of `CZ` gates (its stabilizers mix `X` and `Z`); its ideal encoder, built
   from the Choi state following Yeh et al., checked with numpy against its definition, and drawn

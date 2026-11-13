@@ -329,7 +329,8 @@ def _stagger_labels(fig: Any, ax: Any, placed: list[tuple[float, str, str]], ymi
 
 def draw_graph(g: BaseGraph[VT, ET], *, time_axis: bool = True, show_time: bool = True,
                label_size: float | None = None, label_side: str = 'below',
-               names: dict[Any, str] | None = None, **kwargs: Any) -> Any:
+               names: dict[Any, str] | None = None, phases: str = 'all',
+               names_right: dict[Any, str] | None = None, **kwargs: Any) -> Any:
     """PyZX's 2D drawing (``draw_matplotlib``) of a time-annotated diagram, time along the horizontal axis.
 
     The static counterpart of :func:`~zxqec.spacetime.draw_web`, for any diagram
@@ -338,12 +339,22 @@ def draw_graph(g: BaseGraph[VT, ET], *, time_axis: bool = True, show_time: bool 
     with ``show_time`` PyZX's timestep labels and squiggly delays. ``label_size`` and
     ``label_side`` place the phase labels, as in :func:`draw_program`. ``names`` maps
     vertices of ``g`` to a name written just left of the spider (e.g. the bits of a
-    Z-layer), at ``label_size`` (12 points when it is None). Keyword arguments go to ``draw_matplotlib`` (e.g. ``figsize``,
-    ``labels``). Returns the figure.
+    Z-layer), at ``label_size`` (12 points when it is None). ``label_side='clear'``
+    places every phase label and every name on its own: on the side of its spider
+    where it covers no edge, no spider and no other label (see :func:`_place_clear`).
+    ``phases='constant'`` writes only the phases that are plain numbers (such as the
+    ``7pi/4`` of a gadget leaf) and leaves out those with variables, for a diagram whose
+    long phases are listed elsewhere (name their spiders with ``names``);
+    ``phases='none'`` writes no phase. ``names_right`` writes names just right of their
+    spider, a little above its row (for gadget hubs, whose left side is full of edges;
+    not with ``label_side='clear'``). Keyword arguments go to ``draw_matplotlib``
+    (e.g. ``figsize``, ``labels``). Returns the figure.
     """
     from pyzx.drawing import draw_matplotlib
     from pyzx.utils import get_mode, settings
 
+    if phases not in ('all', 'constant', 'none'):
+        raise ValueError("phases is 'all', 'constant' or 'none', not {!r}".format(phases))
     h = _time_layout(g) if time_axis else g
     mode = get_mode()
     settings.mode = "notebook"                # PyZX would call plt.show() itself otherwise
@@ -351,6 +362,13 @@ def draw_graph(g: BaseGraph[VT, ET], *, time_axis: bool = True, show_time: bool 
         fig = draw_matplotlib(h, show_time=show_time, **kwargs)
     finally:
         settings.mode = mode
+    if phases != 'all':
+        _drop_phase_labels(fig.axes[0], h, keep_constant=phases == 'constant')
+    if label_side == 'clear':
+        at = dict(zip(g.vertices(), h.vertices()))
+        _place_clear(fig, h, [(at[v], name) for v, name in (names or {}).items()],
+                     label_size, label_size if label_size is not None else 12)
+        return _finish(fig)
     if label_size is not None:
         _set_labels(fig.axes[0], label_size, label_side)
     at = dict(zip(g.vertices(), h.vertices()))     # g.copy() numbers the vertices afresh, in this order
@@ -358,7 +376,30 @@ def draw_graph(g: BaseGraph[VT, ET], *, time_axis: bool = True, show_time: bool 
         w = at[v]
         fig.axes[0].text(h.row(w) - 0.3, -h.qubit(w), name, ha='right', va='center',
                          fontsize=label_size if label_size is not None else 12)
+    for v, name in (names_right or {}).items():
+        w = at[v]
+        fig.axes[0].text(h.row(w) + 0.22, -h.qubit(w) + 0.08, name, ha='left', va='bottom',
+                         fontsize=label_size if label_size is not None else 12)
     return _finish(fig)
+
+
+def _drop_phase_labels(ax: Any, h: BaseGraph[VT, ET], keep_constant: bool) -> None:
+    """Remove PyZX's phase labels from ``ax`` (its drawing of ``h``): all of them, or those of phases with variables.
+
+    PyZX writes the phase of the spider at ``(row, -qubit)`` in blue, half a row below it
+    (a quarter for a box)."""
+    at = {(float(h.row(v)), float(-h.qubit(v))): v for v in h.vertices()}
+    for t in list(ax.texts):
+        if t.get_color() != 'blue':
+            continue
+        x, y = t.get_position()
+        v = at.get((float(x), float(y) + 0.5), at.get((float(x), float(y) + 0.25)))
+        if v is None:
+            continue
+        free = getattr(h.phase(v), 'free_vars', None)
+        if keep_constant and (free is None or not free()):
+            continue
+        t.remove()
 
 
 def draw_checks(checks: Sequence[Any], names: Sequence[str] | None = None,
@@ -424,6 +465,100 @@ def _set_labels(ax: Any, size: float, side: str = 'below') -> None:
             t.set_verticalalignment('center')
         t.set_fontsize(size)
         t.set_bbox(dict(facecolor='white', edgecolor='none', alpha=0.8, pad=0.3))
+
+
+_SIDES = {'E': (1, 0), 'W': (-1, 0), 'N': (0, 1), 'S': (0, -1),
+          'NE': (1, 1), 'NW': (-1, 1), 'SE': (1, -1), 'SW': (-1, -1)}
+_PREFERRED = {'phase': ('E', 'S', 'SE', 'NE', 'N', 'W', 'SW', 'NW'),
+              'name': ('W', 'N', 'NE', 'NW', 'S', 'SE', 'SW', 'E')}     # draw_graph writes a name left
+
+
+def _place_clear(fig: Any, h: BaseGraph[VT, ET], names: list[tuple[Any, str]],
+                 phase_size: float | None, name_size: float) -> None:
+    """Every phase label of ``fig`` (PyZX's drawing of ``h``) and every name in ``names``
+    (pairs of a vertex of ``h`` and its text) moved where it covers nothing.
+
+    Each label first tries its own side (right of the spider for a phase, left
+    for a name), just outside the spider and then further out, up to two label
+    widths beyond that: labels in a column of spiders closer than a label is
+    tall then alternate between two places on their own rows, and a name on an
+    input wire goes past the wire's end. Then it tries the other sides of
+    ``_PREFERRED``, nearest first. It takes the first place whose box meets no
+    edge, no spider and no label placed before it, as drawn; if every place meets
+    something, the one that meets the fewest. Phase labels are
+    placed first, then the names, each from the top of the picture down (left to
+    right within a row); timestep labels stay where they are and count as labels. Phase labels get ``phase_size``
+    (PyZX's 8 points when it is None) and names ``name_size``.
+    """
+    from matplotlib.path import Path
+    from matplotlib.transforms import Bbox
+
+    ax = fig.axes[0]
+    pos = {v: (h.row(v), -h.qubit(v)) for v in h.vertices()}   # PyZX puts a vertex at (row, -qubit)
+
+    def radius(v: Any) -> float:
+        t = h.type(v)
+        if t in (VertexType.Z, VertexType.X):
+            return 0.2
+        if t in (VertexType.H_BOX, VertexType.Z_BOX):
+            return 0.14
+        return 0.1
+
+    below = {}                                  # PyZX writes a phase label 0.5 below its spider (0.25 for boxes)
+    for v, (x, y) in pos.items():
+        off = 0.25 if h.type(v) in (VertexType.H_BOX, VertexType.Z_BOX) else 0.5
+        below[(round(x, 6), round(y - off, 6))] = v
+    items = []
+    for t in list(ax.texts):
+        if t.get_color() != 'blue':
+            continue
+        x, y = t.get_position()
+        v = below.get((round(x, 6), round(y, 6)))
+        if v is not None:
+            if phase_size is not None:
+                t.set_fontsize(phase_size)
+            items.append((t, v, 'phase'))
+    for v, name in names:
+        items.append((ax.text(*pos[v], name, fontsize=name_size), v, 'name'))
+    items.sort(key=lambda item: (item[2] == 'name', -pos[item[1]][1], pos[item[1]][0]))
+    for t, _v, _k in items:
+        t.set_horizontalalignment('center')
+        t.set_verticalalignment('center')
+    fig.draw_without_rendering()                # fixes the axes' scale, so text sizes can be measured
+    to_data = ax.transData.inverted()
+
+    def box_of(t: Any) -> Bbox:
+        return Bbox(to_data.transform(t.get_window_extent().get_points()))
+
+    shapes = [(Path(line.get_xydata()), False) for line in ax.lines]
+    shapes += [(p.get_patch_transform().transform_path(p.get_path()), bool(p.get_fill())) for p in ax.patches]
+    moving = {id(t) for t, _v, _k in items}
+    placed = [box_of(t) for t in ax.texts if id(t) not in moving and t.get_text()]
+    gap, pad = 0.05, 0.03
+    for t, v, kind in items:
+        b0 = box_of(t)
+        a, b = b0.width / 2 + pad, b0.height / 2 + pad
+        x, y = pos[v]
+        own, *others = _PREFERRED[kind]
+        along = 2 * a if _SIDES[own][0] else 2 * b          # a label's width (or height) along its own side
+        tries = [(own, e) for e in sorted({0.0, 0.25, 0.5, 1.0, along + gap, 2 * along + 2 * gap})]
+        tries += [(side, e) for e in (0.0, 0.25, 0.5, 1.0) for side in others]
+        best: tuple[int, int, float, float, Bbox] | None = None
+        for order, (side, extra) in enumerate(tries):
+            dx, dy = _SIDES[side]
+            d = (radius(v) + gap) * (0.71 if dx and dy else 1) + extra
+            cx, cy = x + dx * (d + a), y + dy * (d + b)
+            box = Bbox.from_bounds(cx - a, cy - b, 2 * a, 2 * b)
+            hits = sum(path.intersects_bbox(box, filled=filled) for path, filled in shapes)
+            hits += sum(box.overlaps(other) for other in placed)
+            if best is None or (hits, order) < best[:2]:
+                best = (hits, order, cx, cy, box)
+            if hits == 0:
+                break
+        assert best is not None
+        t.set_position((best[2], best[3]))
+        t.set_bbox(None)
+        placed.append(best[4])
 
 
 def _row_span(g: BaseGraph[VT, ET], program: 'QProgram', lo: int, hi: int) -> tuple[float, float]:

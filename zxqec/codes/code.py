@@ -1440,7 +1440,12 @@ def _gadget_layer(h: BaseGraph, zl: list, zm: list, zlayer: list, hubs: list, la
 
     # which X-strings of the internal rows survive
     nonclifford = False
-    if m:
+    clifford = all(g.angle % Fraction(1, 2) == 0 for g in gadgets)
+    fast = _clifford_passing(gadgets, incidence, layer_rows, k, m, flipped, z_terms, pauli_only) \
+        if clifford and m else None
+    if fast is not None:
+        kernel, passing, changes, zparts = fast
+    if m and fast is None:
         kernel, reps = representatives(incidence[:, k:], m)
         passing, changes, zparts = [], [], []
         for a in reps:
@@ -1469,6 +1474,7 @@ def _gadget_layer(h: BaseGraph, zl: list, zm: list, zlayer: list, hubs: list, la
             passing.append(a)
             changes.append({mono: c for mono, c in d.items() if mono not in terms})
             zparts.append(w.astype(np.uint8))
+    if m:
         combos = [row for row in kernel]
         extra: list[dict] = [{} for _ in combos]
         dvecs: list[np.ndarray] = [np.zeros(n, np.uint8) for _ in combos]
@@ -1484,8 +1490,9 @@ def _gadget_layer(h: BaseGraph, zl: list, zm: list, zlayer: list, hubs: list, la
         combo_matrix = np.zeros((0, 0), np.uint8)
         extra, dvecs = [], []
 
-    # non-Clifford logical content: some flip, of any rows, changes the phase by a non-Pauli
-    if not nonclifford:
+    # non-Clifford logical content: some flip, of any rows, changes the phase by a non-Pauli (never, when
+    # every gadget is Clifford: then a flip changes the phase by a constant and a Pauli Z string)
+    if not nonclifford and not clifford:
         try:
             _kernel, reps = representatives(incidence, k + m)
             for b in reps:
@@ -1505,6 +1512,63 @@ def _gadget_layer(h: BaseGraph, zl: list, zm: list, zlayer: list, hubs: list, la
                 for _z, i in g.bits:
                     columns |= {int(j) for j in np.flatnonzero(rows[i])}
     return combo_matrix, extra, dvecs, nonclifford, columns
+
+
+def _clifford_passing(gadgets: list, incidence: np.ndarray, layer_rows: np.ndarray, k: int, m: int,
+                      flipped: Any, z_terms: Any, pauli_only: Any) -> tuple | None:
+    """The X-strings that survive a layer of Clifford gadgets, by Gaussian elimination (no listing).
+
+    When every gadget angle is a multiple of ``pi/2``, flipping the bits ``a`` of
+    the internal rows changes the gadgets' total phase by a constant (which may
+    depend on the outcomes) plus ``pi d(a) . y``, where ``d(a)`` is the sum of the
+    bit sets of the gadgets with angle ``pi/2`` or ``3pi/2`` that see ``a`` oddly
+    (:func:`~zxqec.codes.phasepoly.delta`). ``d`` is linear in ``a``:
+    ``d(a) = Lo^T (Lo_int a)`` for the incidence matrix ``Lo`` of those gadgets.
+    The X-string for ``a`` survives exactly when some ``w`` has ``R w = d(a)`` for
+    the rows ``R`` of the layer, that is when ``N d(a) = 0`` for a basis ``N`` of
+    the vectors orthogonal to the column space of ``R``. So the surviving
+    combinations are the kernel of ``N Lo^T Lo_int``: polynomial, with no limit
+    on the number of gadget parities (the general case lists ``2^r`` of them).
+
+    Returns ``(kernel, passing, changes, zparts)`` as the listing does, or
+    ``None`` when a basis vector is judged differently from this argument (a
+    non-Pauli term, a phase that depends on the outcomes, no ``w``); the caller
+    then falls back to the listing, which handles those cases.
+    """
+    from .phasepoly import delta
+    kernel = nullspace(incidence[:, k:]) if incidence.size else np.eye(m, dtype=np.uint8)
+    odd = [i for i, g in enumerate(gadgets) if g.angle % 1 == Fraction(1, 2)]
+    lo = incidence[odd] if odd else np.zeros((0, k + m), np.uint8)
+    d_matrix = (lo.T.astype(np.int64) @ lo[:, k:].astype(np.int64)) % 2          # (k + m) x m
+    orth = nullspace(layer_rows.T % 2)                                             # u with u^T R = 0
+    if orth.shape[0]:
+        cond = (orth.astype(np.int64) @ d_matrix) % 2
+        passing_space = nullspace(cond.astype(np.uint8))
+    else:
+        passing_space = np.eye(m, dtype=np.uint8)
+    basis = complement_basis(kernel, passing_space) if passing_space.shape[0] else passing_space
+    passing, changes, zparts = [], [], []
+    n = layer_rows.shape[1]
+    for a in basis:
+        a = a.astype(np.uint8)
+        d = delta(gadgets, flipped(a, k))
+        terms = z_terms(d)
+        if terms and not pauli_only(terms, d):
+            return None
+        if (any(not isinstance(v, tuple) for mono in terms for v in mono)
+                or any(c % 1 for mono, c in d.items() if mono and mono not in terms)):
+            return None
+        dv = np.zeros(k + m, dtype=np.uint8)
+        for mono in terms:
+            (bit,) = mono
+            dv[bit[1]] ^= 1
+        w = solve(layer_rows.copy(), dv) if dv.any() else np.zeros(n, np.uint8)
+        if w is None:
+            return None
+        passing.append(a)
+        changes.append({mono: c for mono, c in d.items() if mono not in terms})
+        zparts.append(w.astype(np.uint8))
+    return kernel, passing, changes, zparts
 
 
 def _x_type_sign(a: np.ndarray, v: np.ndarray, w: np.ndarray, change: dict, signs_m: list[Any],

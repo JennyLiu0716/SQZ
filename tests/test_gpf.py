@@ -5,7 +5,7 @@ from fractions import Fraction
 import pytest
 import pyzx as zx
 from pyzx.circuit import Circuit
-from pyzx.circuit.gates import CNOT, HAD, T, XPhase, ZPhase
+from pyzx.circuit.gates import CNOT, HAD, S, T, XPhase, ZPhase
 from pyzx.graph import Graph
 from pyzx.symbolic import Poly, new_var
 from pyzx.utils import EdgeType, VertexType, is_pauli
@@ -238,6 +238,24 @@ def test_non_pauli_phase_on_a_boundary_spider():
     g.add_edge((v, o)); g.set_inputs(()); g.set_outputs((o,))
     h = to_gpf(g)
     assert is_gpf(h) and zx.compare_tensors(g, h, preserve_scalar=False)
+
+
+@pytest.mark.parametrize('one', [False, True], ids=['|0>', '|1>'])
+@pytest.mark.parametrize('gate', [T, S])
+def test_the_first_step_copies_a_fresh_qubit_through_a_phase(gate, one):
+    # T|0> = |0> and T|1> = e^{i pi/4}|1> (the same for S): to_gpf's first step copies the state through the gate's
+    # spider (PyZX's copy rule), so no phase is left to put on a gadget, and the scalar keeps the e^{i pi/4}
+    from pyzx.circuit.gates import NOT
+    from pyzx.circuit.graphparser import circuit_to_graph
+    from zxqec.gpf import to_gpf_steps
+    c = Circuit(2)
+    for g in ([NOT(0)] if one else []) + [gate(0), HAD(0), CNOT(0, 1)]:
+        c.add_gate(g)
+    g = circuit_to_graph(c, initialize_qubits=[True, False])
+    what, first = to_gpf_steps(g)[1]
+    assert what.startswith('identity spiders removed')
+    assert all(is_pauli(first.phase(v)) for v in first.vertices())
+    assert zx.compare_tensors(g, first, preserve_scalar=True)
 
 
 def test_same_map_handles_zero_diagrams():

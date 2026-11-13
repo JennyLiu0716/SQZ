@@ -34,6 +34,10 @@ data, ASAP scheduling, ``time_slice``):
 * :mod:`~zxqec.spacetime.web` -- the same views as interactive JavaScript
   widgets for notebooks (:func:`draw_web`, :func:`draw_program_web`),
   built on PyZX's d3 and three.js viewers;
+* :mod:`~zxqec.spacetime.code_layout` -- :func:`code_layout` and :func:`draw_code_3d`:
+  a reduced diagram in the variables of a code's faces (:func:`in_face_variables`),
+  drawn in 3D on the code's layout like the textbook picture of the code (the
+  Steane triangle at d = 3, with :func:`regular_triangle_coords`);
 * a window for walking through the levels of a program, block by block, with
   each block's diagram before and after its rewrite (:func:`view_levels`), and
   the same with the program in 3D (:func:`view_levels_3d`).
@@ -51,6 +55,8 @@ from .topology import Topology
 from .web import draw_program_web, draw_web
 from .levels_view import LevelsView, LevelsView3D, view_levels, view_levels_3d
 from .relax import RELAX_METHODS, SHADE_COLORS, draw_relaxed, draw_relaxed_3d, relax_layout, relaxed_topology
+from .code_layout import (FACE_COLOURS, HEIGHTS, VIEW, VIEW_HUBS, CodeLayout, code_layout, draw_code_3d,
+                          in_face_variables, regular_triangle_coords)
 
 __all__ = [
     'Topology',
@@ -63,4 +69,6 @@ __all__ = [
     'draw_web', 'draw_program_web',
     'view_levels', 'LevelsView', 'view_levels_3d', 'LevelsView3D',
     'relax_layout', 'draw_relaxed', 'draw_relaxed_3d', 'relaxed_topology', 'RELAX_METHODS', 'SHADE_COLORS',
+    'code_layout', 'draw_code_3d', 'CodeLayout', 'HEIGHTS', 'FACE_COLOURS', 'VIEW', 'VIEW_HUBS', 'in_face_variables',
+    'regular_triangle_coords',
 ]

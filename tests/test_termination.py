@@ -70,7 +70,7 @@ def test_every_skeleton_step_lowers_the_count(monkeypatch):
         assert all(b < a for a, b in zip(seq, seq[1:]))      # one step between consecutive looks
         assert len(seq) - 1 <= seq[0]
         steps += len(seq) - 1
-    assert steps == 1234                                      # the number appendix A quotes
+    assert steps == 528                                       # the number appendix A quotes (1234 before to_gpf copied basis states)
 
 
 def _round_counter(monkeypatch, sizes=None):
@@ -97,12 +97,12 @@ def test_the_alternation_settles_on_random_circuits(monkeypatch):
         sizes.append([])
         reduce_gpf(g)
         rounds.append(count[0])
-    assert max(rounds) == 14                                  # the number appendix A quotes
+    assert max(rounds) == 12                                  # the number appendix A quotes (14 before the copy rule)
     # the loop stops at the first round that changes nothing, so every other round changed the
     # diagram; some of them did so without lowering the number of vertices, which is why a count
     # of spiders cannot prove termination
     middle = [(s[i - 1], s[i]) for s in sizes for i in range(1, len(s) - 1)]
-    assert (sum(1 for before, after in middle if after >= before), len(middle)) == (161, 390)
+    assert (sum(1 for before, after in middle if after >= before), len(middle)) == (108, 218)   # (161, 390) before the copy rule
 
 
 def test_every_reduction_of_the_case_studies_settles_in_a_few_rounds(monkeypatch):
@@ -376,8 +376,9 @@ def test_the_gadget_passes_can_break_the_property():
                 break
             if how is not None:
                 seen[(how, _internal_edges(h) == 0)] += 1
-    assert seen == {('gadgets', False): 100, ('gadgets', True): 134, ('expose', True): 28,
-                    ('expose', False): 4, ('resolve', True): 16, ('resolve', False): 1}
+    # before to_gpf copied basis states: gadgets 100 / 134, expose 28 / 4, resolve 16 / 1
+    assert seen == {('gadgets', False): 45, ('gadgets', True): 102, ('expose', True): 19,
+                    ('expose', False): 1, ('resolve', True): 10}
 
 
 def _alternate_once(h):
