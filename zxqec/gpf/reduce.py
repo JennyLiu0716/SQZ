@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The GPF reduction pipeline (Algorithm 3 of the thesis, with phases).
+"""The GPF reduction pipeline (split-matrix row reduction, with phases).
 
 :func:`reduce_gpf` brings a diagram into generalized parity form
 (:func:`~zxqec.gpf.normal_form.to_gpf`), then alternates the split-matrix row
@@ -73,7 +73,7 @@ def reduce_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
     and diagrams should be compared modulo the constraints.
 
     ``isolate_paulis=True`` isolates every non-zero phase into a gadget (the
-    thesis's behaviour); by default Pauli phases stay on the spiders and are
+    phase-free behaviour); by default Pauli phases stay on the spiders and are
     carried through the row reduction.
 
     ``max_rounds`` caps the alternation of the two layers (default ``20 + 2|V|``

@@ -19,7 +19,7 @@ terminal:
     python examples/fold_h_gpf_blocks_top.py --save blocks.png  # write it to a file instead
     python examples/fold_h_gpf_blocks_top.py --elev 90          # straight from the top
     python examples/fold_h_gpf_blocks_top.py --columns 8        # all eight blocks in one row
-    python examples/fold_h_gpf_blocks_top.py --miswired         # with the thesis files' wiring error
+    python examples/fold_h_gpf_blocks_top.py --miswired         # with the original files' wiring error
     python examples/fold_h_gpf_blocks_top.py --rewrite "X checks=x-z gpf_checks"   # one stage in another form
 """
 
@@ -45,7 +45,7 @@ import interactive_fold_h_gpf_3d as gpf  # noqa: E402
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--miswired", action="store_true", help="the thesis files' wiring error in the round after the rotation")
+    ap.add_argument("--miswired", action="store_true", help="the original files' wiring error in the round after the rotation")
     ap.add_argument("--rewrite", action="append", default=[], metavar="STAGE=REWRITE",
                     help="rewrite one stage with its own rewrite, e.g. \"X checks=x-z gpf_checks\" (repeatable)")
     ap.add_argument("--elev", type=float, default=70, help="angle above the chip, 90 straight from the top (default 70)")

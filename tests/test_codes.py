@@ -225,7 +225,7 @@ def test_summary_of_fold_transversal_h():
     assert [b.operation() for b in s.blocks] == ['I', 'H', 'I', 'I', 'I', 'I']
 
 
-def test_summary_flags_the_miswired_check_of_the_thesis_circuit():
+def test_summary_flags_the_miswired_check_of_the_original_circuit():
     text = open(os.path.join(F.CIRCUITS, 'ft_h_5.qasm')).read()
     assert "cx q[4], q[14];" in text
     path = os.path.join(tempfile.mkdtemp(), 'ft_h_5_miswired.qasm')

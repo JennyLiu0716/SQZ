@@ -20,10 +20,7 @@ coordinates) and which pairs are connected. It is used by
 along edges are allowed when ``check_topology=True``) and by the 2+1D drawing
 code to place the qubit wires in space.
 
-This is a port of the thesis ``Topology`` class with plain names
-(``neighbors`` instead of ``get_neighbors``, ``distance`` instead of
-``get_edge_distance``, ``coordinates`` instead of ``get_node_coordinates``,
-``draw`` instead of ``visualize``) and constructors for the common lattices.
+There are constructors for the common lattices.
 """
 
 from __future__ import annotations

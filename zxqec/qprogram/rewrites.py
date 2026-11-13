@@ -37,18 +37,18 @@ The rewrites known by name (:data:`REWRITES`):
 * ``'full_reduce'``, ``'clifford_simp'``, ``'spider_simp'`` -- PyZX's simplifiers;
 * ``'teleport_reduce'`` -- PyZX's phase teleportation, which keeps the shape of
   the diagram and only moves phases;
-* ``'thesis notation'``, ``'copy and fuse'``, ``'remove identities'`` -- the steps
+* ``'standard notation'``, ``'copy and fuse'``, ``'remove identities'`` -- the steps
   of a derivation by hand (:mod:`zxqec.gpf.rules`): measurements as effects and
   swaps as crossing wires; states copied and one-legged spiders fused; identities
   removed and cancelling phases fused. Levelling up one part of a circuit after
-  another with them gives the diagrams of Eq. (6.42) of L. Yeh's thesis;
+  another with them gives the diagrams of gate teleportation;
 * ``'copy results'`` -- ``'copy and fuse'`` that also copies states such as ``|a>``
-  whose phase is a Boolean variable (the parity check of Eq. (4.8));
+  whose phase is a Boolean variable (the parity check of the bit-flip code);
 * ``'phase gadgets'``, ``'spider nest'`` -- the non-Pauli phases on phase gadgets,
   drawn along the wires, without and with the gadget layer simplified (the
-  spider-nest identities): the diagrams of Eqs. (6.45) and (6.46);
+  spider-nest identities): the transversal-CCZ diagrams;
 * ``'x-z gpf'`` -- the normal form with the colours swapped, an X-spider on each
-  input (the decoder of Eq. (6.49)); ``'x-z gpf_checks'`` -- the same with the
+  input (the decoder in magic-state distillation); ``'x-z gpf_checks'`` -- the same with the
   checks one per spider, as ``'gpf_checks'``;
 * ``'unfuse outcomes'`` -- each phase that depends on outcomes on a spider of its
   own, to show where the outcome phases are (correction finding).
@@ -133,7 +133,7 @@ REWRITES: dict[str, Callable[[BaseGraph], Any]] = {
     'clifford_simp': _pyzx('clifford_simp'),
     'spider_simp': _pyzx('spider_simp'),
     'teleport_reduce': _pyzx('teleport_reduce'),
-    'thesis notation': _rules('thesis_notation'),
+    'standard notation': _rules('standard_notation'),
     'copy and fuse': _rules('copy_and_fuse'),
     'copy results': _rules('copy_and_fuse', results=True),
     'remove identities': _rules('remove_identities'),

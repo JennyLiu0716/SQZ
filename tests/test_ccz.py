@@ -1,4 +1,4 @@
-"""The transversal CCZ of the [[8,3,2]] code (L. Yeh's thesis, Eqs. (6.44)-(6.46); examples/TransversalCCZ.ipynb and
+"""The transversal CCZ of the [[8,3,2]] code (examples/TransversalCCZ.ipynb and
 examples/TransversalCCZStepByStep.ipynb)."""
 from fractions import Fraction
 
@@ -8,7 +8,7 @@ from pyzx.circuit.gates import CCZ, CNOT, T, PostSelect
 from zxqec.gpf import equal_for_all_assignments, phase_polynomial, reduce_gpf
 from zxqec.qprogram import QProgram
 
-#: qubit k is the thesis's qubit [8, 7, 6, 4, 1, 2, 3, 5][k]; x, y, z enter on 1, 2, 3; wires in the thesis's order
+#: qubit k is qubit [8, 7, 6, 4, 1, 2, 3, 5][k] of the reference numbering; x, y, z enter on 1, 2, 3; wires in the reference order
 WIRES = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 0: 7}
 CORNERS = ['000', '100', '010', '001', '111', '011', '101', '110']
 GHZ = [CNOT(0, 4), CNOT(0, 5), CNOT(0, 6), CNOT(0, 7)]

@@ -9,8 +9,6 @@ description = "Space-time ZX-diagrams for designing and verifying dynamic quantu
 readme = "README.md"
 license = "Apache-2.0"
 authors = [
-    {name = "Chenxi Liu"},
-    {name = "Lia Yeh"},
 ]
 requires-python = ">=3.10"
 classifiers = [
@@ -22,17 +20,12 @@ classifiers = [
     "Development Status :: 2 - Pre-Alpha",
 ]
 dependencies = [
-    # PyZX is taken from the fork's master branch, which carries pyzx.spacetime
-    # (timestep/delay annotation, ASAP scheduling, time_slice) ahead of the
-    # upstream release. Switch to a plain "pyzx>=X.Y" once that is released.
-    # For development next to a checkout use `pip install -e ../pyzx` instead.
-    "pyzx @ git+https://github.com/JennyLiu0716/pyzx.git@master",
+    # Needs the PyZX snapshot bundled in ../pyzx, which carries pyzx.spacetime
+    # (timestep/delay annotation, ASAP scheduling, time_slice) ahead of a PyZX
+    # release: install it first with `pip install -e ../pyzx`.
+    "pyzx",
     "numpy>=1.14",
 ]
-
-[project.urls]
-Homepage = "https://github.com/JennyLiu0716/zxqec"
-Repository = "https://github.com/JennyLiu0716/zxqec.git"
 
 [project.optional-dependencies]
 dev = [

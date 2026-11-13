@@ -16,8 +16,8 @@
 
 A diagram in GPF is bipartite: a layer of Z-spiders, each attached to at most
 one input, followed by a layer of X-spiders, each attached to at most one
-output, connected by plain edges (the phase-free normal form of Yeh et al.,
-Algorithm 1 of the thesis). This module produces that shape for diagrams that
+output, connected by plain edges (the phase-free normal form of
+the three-way normal form paper). This module produces that shape for diagrams that
 also carry phases:
 
 * **Pauli phases** -- concrete ``pi`` or symbolic Boolean parameters such as
@@ -33,8 +33,8 @@ also carry phases:
   the pipeline depends on its degree. Gadgets take no part in the skeleton reduction and are
   treated as fixed external targets by the matrix reduction.
 
-``isolate_paulis=True`` isolates *every* non-zero phase, which reproduces the
-thesis's Algorithm 2 (a phase-free skeleton plus gadgets).
+``isolate_paulis=True`` isolates *every* non-zero phase, which gives a
+phase-free skeleton plus gadgets.
 
 Hadamard edges are pushed to the boundary wires beforehand (see
 :mod:`zxqec.gpf.hadamard`). Those that cannot be absorbed by recolouring, because
@@ -86,7 +86,7 @@ def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
            max_steps: int | None = None, cz_gadgets: bool = True) -> BaseGraph[VT, ET]:
     """Return a copy of ``g`` in generalized parity form with phases.
 
-    Steps (Algorithm 2 of the thesis, generalised):
+    Steps (the phase-free algorithm, generalised):
 
     1. push Hadamard edges to the boundary wires, writing those that close an
        odd-Hadamard cycle as ``CZ`` phase gadgets (``cz_gadgets=False`` raises
@@ -100,8 +100,8 @@ def to_gpf(g: BaseGraph[VT, ET], isolate_paulis: bool = False,
        needed, and give every spider at most one boundary.
 
     ``max_steps`` bounds the number of bialgebra applications. By default it is
-    the bound of the termination lemma (appendix A of the paper, after Yeh et
-    al., Lemma B.1): the number of Z-spiders that are neither leaves nor stems
+    the bound of the termination lemma (appendix A of the paper, after
+    the three-way normal form paper, Lemma B.1): the number of Z-spiders that are neither leaves nor stems
     and touch no input when step 3 starts (:func:`skeleton_count`), which every
     application lowers. Exceeding it raises ``RuntimeError``, which with the
     default bound means a bug.
@@ -306,7 +306,7 @@ def _split_multi_boundary_spiders(g: BaseGraph[VT, ET]) -> None:
 
     The first copy keeps the interior connections (and the phase); the others
     are chained to it through phase-free spiders of the opposite colour, which
-    is the reverse of fusion followed by bialgebra unfusion (thesis Stage 4).
+    is the reverse of fusion followed by bialgebra unfusion.
     """
     ins, outs = set(g.inputs()), set(g.outputs())
     for v in list(g.vertices()):

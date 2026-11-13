@@ -1,11 +1,10 @@
-"""Magic state distillation, level by level: Eqs. (6.48) and (6.49) of L. Yeh's thesis.
+"""Magic state distillation, level by level.
 
-The script version of ``MagicStateDistillationStepByStep.ipynb``. L. Yeh's
-thesis (Section 6.5) turns the transversal CCZ of the [[8,3,2]] code around.
-Eq. (6.48): the decoder E^dag applied to eight magic states (T and T^dag on
-|+>) equals E^dag applied to |+>^8, followed by a CCZ. Eq. (6.49) rewrites the
+The script version of ``MagicStateDistillationStepByStep.ipynb``. It turns the
+transversal CCZ of the [[8,3,2]] code around. The distillation identity: the decoder E^dag applied to eight magic states (T and T^dag on
+|+>) equals E^dag applied to |+>^8, followed by a CCZ. The decoding derivation rewrites the
 right-hand side, one rewrite per level, into the three-legged H-box: the CCZ
-magic state. The tool checks Eq. (6.48), and checks every level of Eq. (6.49)
+magic state. The tool checks the identity, and checks every level of the derivation
 against the circuit.
 
 Run from a terminal. Each step prints what the tool finds and opens its
@@ -38,13 +37,13 @@ from zxqec.gpf import equal_for_all_assignments
 from zxqec.qprogram import QProgram
 from zxqec.spacetime import draw_program, view_levels
 
-# as in TransversalCCZ.ipynb: qubit k is the thesis's qubit [8, 7, 6, 4, 1, 2, 3, 5][k]; x, y, z are qubits 1, 2, 3
-WIRES = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 0: 7}          # drawn in the thesis's order of wires
+# as in TransversalCCZ.ipynb: qubit k is qubit [8, 7, 6, 4, 1, 2, 3, 5][k] of the reference numbering; x, y, z are qubits 1, 2, 3
+WIRES = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 0: 7}          # drawn in the reference order of wires
 GHZ = [CNOT(0, 4), CNOT(0, 5), CNOT(0, 6), CNOT(0, 7)]
 FROM_X = [CNOT(1, 4), CNOT(1, 6), CNOT(1, 7), CNOT(0, 1)]
 FROM_Y = [CNOT(2, 4), CNOT(2, 5), CNOT(2, 7), CNOT(0, 2)]
 FROM_Z = [CNOT(3, 4), CNOT(3, 5), CNOT(3, 6), CNOT(0, 3)]
-# the magic states of Eq. (6.48): T^dag on the thesis's qubits 1, 4, 6, 7, T on 2, 3, 5, 8
+# the magic states: T^dag on the reference qubits 1, 4, 6, 7, T on 2, 3, 5, 8
 P_DAGGER = [T(1, adjoint=True), T(2, adjoint=True), T(3, adjoint=True), T(4, adjoint=True), T(5), T(6), T(7), T(0)]
 # the decoder E^dag: the encoder's CNOTs in reverse order, then each GHZ qubit projected on the state it started in
 DECODER = (FROM_Z[::-1] + FROM_Y[::-1] + FROM_X[::-1] + GHZ[::-1]
@@ -52,7 +51,7 @@ DECODER = (FROM_Z[::-1] + FROM_Y[::-1] + FROM_X[::-1] + GHZ[::-1]
 
 
 def build():
-    """Both sides of Eq. (6.48) as programs, and the four levels of Eq. (6.49) on the right-hand side."""
+    """Both sides of the distillation identity as programs, and the four levels of the decoding on the right-hand side."""
     magic = QProgram(8, mapping=WIRES, initial_states={q: '+' for q in range(8)})
     decoded = QProgram(8, mapping=WIRES, initial_states={q: '+' for q in range(8)})
     for program, stages in ((magic, ((P_DAGGER, 'magic states'), (DECODER, 'decoder'))),
@@ -63,7 +62,7 @@ def build():
                 c.add_gate(gate)
             program.add_circuit(c, name=name)
     # four level-ups of the right-hand side, each with one rewrite
-    notation = decoded.group_stages([(0, 0, '|+> states', None, 'thesis notation')])
+    notation = decoded.group_stages([(0, 0, '|+> states', None, 'standard notation')])
     normal_form = decoded.level_up(notation, 1, 1, 'decoder', rewrite='x-z gpf')
     copied = decoded.level_up(normal_form, 0, 1, '|+> states and decoder', rewrite='copy and fuse')
     h_box = decoded.level_up(copied, 0, 1, 'all', rewrite='remove identities')
@@ -93,18 +92,18 @@ def main() -> None:
 
     magic, decoded, (notation, normal_form, copied, h_box) = build()
 
-    print("== Eq. (6.48): the magic states decoded (left) and |+>^8 decoded, then a CCZ (right)")
+    print("== The distillation identity: the magic states decoded (left) and |+>^8 decoded, then a CCZ (right)")
     print("left-hand side:", magic.logical_action().verdict())
     print("both sides the same map:", equal_for_all_assignments(magic.quantum_graph(), decoded.quantum_graph()))
     show('eq-6.48', draw_program(magic, show_time=False, labels=False, figsize=(12, 5)),
          draw_program(decoded, show_time=False, labels=False, figsize=(12, 5)))
 
-    print("\n== Eq. (6.49), level by level")
+    print("\n== The decoding, level by level")
     for level in (notation, normal_form, copied, h_box):
         print(decoded.describe_level(level), end='\n\n')
     circuit_graph = decoded.quantum_graph()
 
-    steps = ((notation, 0, (12, 5), "Level 1: the |+> states in the thesis's notation"),
+    steps = ((notation, 0, (12, 5), "Level 1: the |+> states in standard notation"),
              (normal_form, 1, (8, 6), "Level 2: E^dag in normal form"),
              (copied, 0, (5, 4), "Level 3: the |+> states copy and fuse"),
              (h_box, 0, (4, 3), "Level 4: the three-legged H-box"))

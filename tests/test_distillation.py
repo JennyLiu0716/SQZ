@@ -1,5 +1,5 @@
-"""Magic-state distillation with the [[8,3,2]] code, eight T states to one CCZ state (L. Yeh's thesis,
-Eqs. (6.47)-(6.49); examples/MagicStateDistillation.ipynb and examples/MagicStateDistillationStepByStep.ipynb)."""
+"""Magic-state distillation with the [[8,3,2]] code, eight T states to one CCZ state
+(examples/MagicStateDistillation.ipynb and examples/MagicStateDistillationStepByStep.ipynb)."""
 from pyzx.circuit import Circuit
 from pyzx.circuit.gates import CCZ, CNOT, HAD, T, Measurement, PostSelect
 
@@ -73,8 +73,8 @@ def test_eqs_6_48_and_6_49_level_by_level():
     magic = _program([P_DAGGER, DECODE + PROJECT], {q: '+' for q in range(8)}, bits=0)
     decoded = _program([[], DECODE + PROJECT, [CCZ(1, 2, 3)]], {q: '+' for q in range(8)}, bits=0)
     assert magic.logical_action().verdict() == 'deterministic: every run implements prepares CCZ|+++>'
-    assert equal_for_all_assignments(magic.quantum_graph(), decoded.quantum_graph())          # Eq. (6.48)
-    notation = decoded.group_stages([(0, 0, None, None, 'thesis notation')])
+    assert equal_for_all_assignments(magic.quantum_graph(), decoded.quantum_graph())          # the distillation identity
+    notation = decoded.group_stages([(0, 0, None, None, 'standard notation')])
     normal_form = decoded.level_up(notation, 1, 1, rewrite='x-z gpf')
     copied = decoded.level_up(normal_form, 0, 1, rewrite='copy and fuse')
     h_box = decoded.level_up(copied, 0, 1, rewrite='remove identities')

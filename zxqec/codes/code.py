@@ -1795,7 +1795,7 @@ def _choi_encoder(code: 'StabilizerCode') -> BaseGraph:
     likewise for ``Z``. These ``n + k`` generators are independent and commute,
     so they fix the state up to a scalar. :func:`_stabilizer_state` draws it,
     and its first ``k`` outputs become the inputs, which reads the same tensor
-    as a map: the route of Yeh et al. (Section 4.1, "un-Choi"). Up to a
+    as a map: the route of the three-way normal form paper (Section 4.1, "un-Choi"). Up to a
     non-zero scalar.
     """
     n, k = code.n, code.k
@@ -1838,8 +1838,8 @@ def _stabilizer_state(xs: np.ndarray, zs: np.ndarray, signs: list[Any], m: int) 
     diagonal Clifford ``|x> -> i^(a . x) (-1)^(sum_{q<p} B_qp x_q x_p) |x>`` (``S``
     gates and ``CZ`` s) with ``Gamma = diag(a) + B`` symmetric and ``R Gamma = W``:
     the factorisation of a stabilizer tableau into an inner CSS code and a
-    diagonal Clifford of Yeh, Huang, Kissinger, Li and van de Wetering (*A
-    three-way normal form for stabiliser codes*, Theorem 6.1 and Proposition
+    diagonal Clifford of *A Three-Way Normal Form for Stabiliser Codes across
+    ZX Diagrams, Circuits, and Tableaus* (QPL 2026; Theorem 6.1 and Proposition
     6.2), with the signs added. Generator ``j`` shifts ``y_j`` by one and
     multiplies the term of ``x`` by ``i^(a.v_j - v_j.w_j) (-1)^(Q(v_j) + rho_j)``
     over its own phase (``Gamma v_j = w_j`` cancels the parts that depend on
@@ -1864,7 +1864,7 @@ def _stabilizer_state(xs: np.ndarray, zs: np.ndarray, signs: list[Any], m: int) 
         rv, rw = vx.astype(np.int64), vz.astype(np.int64)
         if not ((rv @ rw.T) % 2 == (rw @ rv.T) % 2).all():
             raise ValueError("the generators do not commute")
-        # Yeh et al., Proposition 6.2: G = R N + N^T R^T + R H N^T R^T is symmetric and H G = N,
+        # the three-way normal form paper, Proposition 6.2: G = R N + N^T R^T + R H N^T R^T is symmetric and H G = N,
         # for H the X parts, N the Z parts and R a right inverse of H (the tableau normal form
         # [H | H G ; 0 | H_Z] of their Theorem 6.1)
         gamma = (rinv @ rw + rw.T @ rinv.T + rinv @ rv @ rw.T @ rinv.T) % 2

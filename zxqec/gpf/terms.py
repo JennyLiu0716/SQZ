@@ -19,7 +19,7 @@ input has its own Z-spider and every output its own X-spider. The other spiders
 are *hidden*: Z-spiders not on an input are bits summed over, X-spiders not on an
 output are parity checks. Splitting each hidden Z-spider into ``|0...0> + |1...1>``
 and each hidden X-spider into ``|+...+> + |-...->`` writes the diagram as a sum of
-``2^(n_i + n_o)`` terms (L. Yeh's decomposition). The diagram falls apart into
+``2^(n_i + n_o)`` terms. The diagram falls apart into
 connected *parts*, and the terms of the whole are the products of the terms of the
 parts, so each part is split on its own; a part with more than ``max_terms`` terms
 is reported but not split. Each term is reduced again and cut into *pieces*: its

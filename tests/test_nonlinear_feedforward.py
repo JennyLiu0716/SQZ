@@ -8,7 +8,7 @@ from zxqec.qprogram import QProgram
 
 
 def _rounds(error, rounds=2):
-    """The repetition-code round of the thesis (X0X1, X1X2 on ancillas 3, 4) with the minimum-weight Z correction."""
+    """A repetition-code round (X0X1, X1X2 on ancillas 3, 4) with the minimum-weight Z correction."""
     p = QProgram(5, bits=4, initial_states={3: '0', 4: '0'})
     stages = [('round 1', 'c', [HAD(3), HAD(4)])]
     if rounds == 2:

@@ -22,7 +22,7 @@ STEANE = [(0, 0, 'encode data', 'encoder'), (1, 2, 'prepare magic', 'state prepa
 
 
 def _miswired_fold_h():
-    """The fold-transversal H with the thesis's original wiring error in ft_h_5.qasm."""
+    """The fold-transversal H with the original files' wiring error in ft_h_5.qasm."""
     text = open(os.path.join(F.CIRCUITS, 'ft_h_5.qasm')).read()
     path = os.path.join(tempfile.mkdtemp(), 'ft_h_5_miswired.qasm')
     with open(path, 'w') as f:

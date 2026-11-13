@@ -24,8 +24,7 @@ program turns that into a circuit or a sub-diagram. A composite block can also
 name a ``rewrite``, applied to its diagram when it is levelled up
 (:mod:`~zxqec.qprogram.rewrites`); without one, a level-up only groups.
 
-Ported from the thesis ``GateLevelManager``, with stages instead of single
-gates as the atomic unit.
+Stages, not single gates, are the atomic unit.
 """
 
 from __future__ import annotations

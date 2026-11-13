@@ -1,11 +1,10 @@
-"""The transversal CCZ, level by level: Eqs. (6.45) and (6.46) of L. Yeh's thesis.
+"""The transversal CCZ, level by level.
 
-The script version of ``TransversalCCZStepByStep.ipynb``. L. Yeh's thesis
-(Section 6.5) proves that T on four qubits of the [[8,3,2]] code and T^dag on
+The script version of ``TransversalCCZStepByStep.ipynb``. It shows that T on four qubits of the [[8,3,2]] code and T^dag on
 the other four is a logical CCZ. It writes the logical gate as L = E; P; E^dag
-(the encoder, the layer P of T and T^dag gates, the decoder). Eq. (6.45) moves
+(the encoder, the layer P of T and T^dag gates, the decoder). The first step moves
 the CNOTs on either side of P through it, one group at a time, so that each T
-becomes a phase gadget on the parity the CNOTs computed. Eq. (6.46) removes the
+becomes a phase gadget on the parity the CNOTs computed. The second step removes the
 gadgets that involve the encoder's random bit w (the spider-nest identities),
 which leaves the CCZ. Each step is one level-up with one rewrite, checked
 against the circuit.
@@ -40,16 +39,16 @@ from zxqec.gpf import equal_for_all_assignments
 from zxqec.qprogram import QProgram
 from zxqec.spacetime import draw_program, view_levels
 
-# qubit k here is the thesis's qubit THESIS[k] (Eq. (6.27)); x, y and z enter on qubits 1, 2 and 3
-THESIS = [8, 7, 6, 4, 1, 2, 3, 5]
-# the wires, as the thesis draws them, top to bottom: its qubits 7, 6, 4, 1, 2, 3, 5, 8
+# qubit k here is qubit REF[k] of the reference numbering; x, y and z enter on qubits 1, 2 and 3
+REF = [8, 7, 6, 4, 1, 2, 3, 5]
+# the wires, as the reference drawing shows them, top to bottom: its qubits 7, 6, 4, 1, 2, 3, 5, 8
 WIRES = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 0: 7}
-# the encoder of Eq. (6.27): a GHZ state on the thesis's qubits 8, 1, 2, 3, 5, then four CNOTs from each of x, y, z
+# the encoder: a GHZ state on the reference qubits 8, 1, 2, 3, 5, then four CNOTs from each of x, y, z
 GHZ = [CNOT(0, 4), CNOT(0, 5), CNOT(0, 6), CNOT(0, 7)]
 FROM_X = [CNOT(1, 4), CNOT(1, 6), CNOT(1, 7), CNOT(0, 1)]
 FROM_Y = [CNOT(2, 4), CNOT(2, 5), CNOT(2, 7), CNOT(0, 2)]
 FROM_Z = [CNOT(3, 4), CNOT(3, 5), CNOT(3, 6), CNOT(0, 3)]
-# P of Eq. (6.45): T on the thesis's qubits 1, 4, 6, 7, T^dag on 2, 3, 5, 8
+# P: T on the reference qubits 1, 4, 6, 7, T^dag on 2, 3, 5, 8
 P = [T(1), T(2), T(3), T(4), T(5, adjoint=True), T(6, adjoint=True), T(7, adjoint=True), T(0, adjoint=True)]
 
 
@@ -94,7 +93,7 @@ def main() -> None:
     show('circuit', draw_program(circuit, show_time=False, labels=False, figsize=(16, 6)))
 
     # grouped into the encoder, P and the decoder: questions 2 and 3, and for P the composite of the code's
-    # ideal encoder, P and the ideal decoder (the first diagram of Eq. (6.45)). This grouping comes first:
+    # ideal encoder, P and the ideal decoder (the first diagram of the derivation). This grouping comes first:
     # levelling up again from level 0 below starts a new chain of levels, which replaces it.
     print("\n== E, P and E^dag")
     parts = circuit.group_stages([(0, 3, 'E', 'encoder'), (4, 4, 'P', 'transversal gate'),
@@ -122,7 +121,7 @@ def main() -> None:
              (through_y, 2, (16, 6), "Level 2: through the CNOTs from y"),
              (through_x, 1, (16, 6), "Level 3: through the CNOTs from x"),
              (through_ghz, 0, (10, 5), "Level 4: through the GHZ state"),
-             (nest, 0, (10, 5), "Level 5: the spider nest (Eq. (6.46))"))
+             (nest, 0, (10, 5), "Level 5: the spider nest"))
     for k, (level, index, figsize, title) in enumerate(steps, start=1):
         print("==", title)
         print(circuit.reduced_block(level, index))

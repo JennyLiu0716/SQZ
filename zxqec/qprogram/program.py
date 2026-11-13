@@ -32,8 +32,7 @@ Stages can be grouped hierarchically into blocks ("level-up", see
 :mod:`zxqec.qprogram.levels`), and the sub-diagram of any stage or block can
 be extracted as a valid ZX-diagram for further reasoning with PyZX.
 
-This is a rework of the thesis ``QProgram`` on top of unmodified PyZX: no
-``GraphST`` subclass, no ``Permutation`` edge type; a permutation is a change
+It is built on unmodified PyZX: a permutation is a change
 of the logical-to-physical mapping, drawn as identity spiders on the new wires.
 """
 
@@ -202,7 +201,7 @@ class QProgram:
     def from_circuit(cls, circ: Circuit, per_gate: bool = False, **kwargs: Any) -> 'QProgram':
         """A program with ``circ`` as its only stage, or one stage per gate.
 
-        ``per_gate=True`` reproduces the thesis model in which every gate is
+        ``per_gate=True`` gives the model in which every gate is
         its own timestep; keyword arguments go to the constructor.
         """
         p = cls(circ.qubits, bits=circ.bits, **kwargs)

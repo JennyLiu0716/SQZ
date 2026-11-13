@@ -2,7 +2,7 @@
 
 The skeleton reduction of ``to_gpf``: every bialgebra step lowers the number of
 Z-spiders that are neither leaves nor stems and touch no input (the lemma after
-Yeh et al., Lemma B.1). This is checked here in the real loop, by recording the
+the three-way normal form paper, Lemma B.1). This is checked here in the real loop, by recording the
 count each time it looks for the next pair.
 
 The alternation of ``reduce_gpf`` has no termination proof; these tests only

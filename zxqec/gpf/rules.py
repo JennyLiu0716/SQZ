@@ -22,11 +22,11 @@ as ``c[0]`` (pi times a measurement result), which holds because it holds for
 each value of the result.
 
 Three rewrites of a whole diagram, made of these rules, are the steps of a
-derivation such as Eq. (6.42) of L. Yeh's thesis (gate teleportation); they are
+derivation such as gate teleportation; they are
 level-up rewrites by the same names (:mod:`zxqec.qprogram.rewrites`):
 
-* :func:`thesis_notation` -- PyZX's diagram of a circuit in the notation of the
-  thesis: identity spiders removed (a swap becomes crossing wires), a spider with
+* :func:`standard_notation` -- PyZX's diagram of a circuit in the notation used
+  in hand derivations: identity spiders removed (a swap becomes crossing wires), a spider with
   one leg on a Hadamard edge drawn in the other colour (``|0>`` then ``H`` is
   ``|+>``), each measurement result copied off its wire (a measurement effect, and
   the state it leaves), and a closed piece left by a reset made a number;
@@ -38,8 +38,8 @@ level-up rewrites by the same names (:mod:`zxqec.qprogram.rewrites`):
 * :func:`remove_identities` -- every identity spider removed, and neighbouring
   spiders of the same colour whose phases cancel (``c[0]`` and ``c[0]``) fused.
 
-and two more for derivations with phase gadgets, such as Eqs. (6.45) and (6.46)
-(the transversal CCZ of the ``[[8,3,2]]`` code), level-up rewrites ``'phase
+and two more for derivations with phase gadgets, such as the transversal
+CCZ of the ``[[8,3,2]]`` code, level-up rewrites ``'phase
 gadgets'`` and ``'spider nest'``:
 
 * :func:`phase_gadgets` -- the diagram reduced to GPF with its non-Pauli phases on
@@ -50,11 +50,11 @@ gadgets'`` and ``'spider nest'``:
   first (:func:`~zxqec.gpf.simplify_gadgets`: the spider-nest identities);
 * :func:`unfuse_outcomes` -- each phase that depends on measurement outcomes split
   off into a spider of its own (level-up rewrite ``'unfuse outcomes'``), the first
-  step of L. Yeh's correction finding: the outcome phases ``j pi`` made visible;
+  step of correction finding: the outcome phases ``j pi`` made visible;
 * :func:`x_z_normal_form` -- the normal form with the colours swapped (level-up
   rewrite ``'x-z gpf'``): an X-spider for each input and a Z-spider for each
   output, as the adjoint of an encoder's Z-X normal form is, e.g. the decoder in
-  Eq. (6.49).
+  magic-state distillation.
 
 Each keeps the linear map, the scalar included (a closed piece becomes part of
 the scalar, which may depend on the results).
@@ -69,7 +69,7 @@ from pyzx.graph.base import BaseGraph
 from pyzx.symbolic import Poly
 from pyzx.utils import vertex_is_zx
 
-__all__ = ['copy_leaf', 'thesis_notation', 'copy_and_fuse', 'remove_identities', 'phase_gadgets',
+__all__ = ['copy_leaf', 'standard_notation', 'copy_and_fuse', 'remove_identities', 'phase_gadgets',
            'x_z_normal_form', 'unfuse_outcomes']
 
 
@@ -152,8 +152,8 @@ def _fuse_leaf(g: BaseGraph, leaf: Any, w: Any) -> bool:
     return False
 
 
-def thesis_notation(g: BaseGraph) -> BaseGraph:
-    """PyZX's diagram of a circuit in the notation of L. Yeh's thesis (see the module docstring); ``g`` in place.
+def standard_notation(g: BaseGraph) -> BaseGraph:
+    """PyZX's diagram of a circuit in the notation used in hand derivations (see the module docstring); ``g`` in place.
 
     Identity spiders are removed; a spider with one leg on a Hadamard edge is
     colour changed; every measurement result (a spider PyZX tags

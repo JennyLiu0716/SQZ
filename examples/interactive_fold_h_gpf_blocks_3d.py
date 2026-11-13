@@ -16,7 +16,7 @@ it, at a time set by how far it is from the inputs and from the outputs
 
     python examples/interactive_fold_h_gpf_blocks_3d.py               # the program
     python examples/interactive_fold_h_gpf_blocks_3d.py top           # start from the bird's-eye view (also: front, side)
-    python examples/interactive_fold_h_gpf_blocks_3d.py --miswired    # with the thesis files' wiring error
+    python examples/interactive_fold_h_gpf_blocks_3d.py --miswired    # with the original files' wiring error
     python examples/interactive_fold_h_gpf_blocks_3d.py --rewrite "X checks=x-z gpf_checks"   # one stage in X-Z form
     python examples/interactive_fold_h_gpf_blocks_3d.py --save fig.png   # write the window to a file instead
 """
@@ -44,7 +44,7 @@ import interactive_fold_h_gpf_3d as gpf  # noqa: E402
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("view", nargs="?", default="default", choices=sorted(VIEWS), help="starting viewpoint")
-    ap.add_argument("--miswired", action="store_true", help="the thesis files' wiring error in the round after the rotation")
+    ap.add_argument("--miswired", action="store_true", help="the original files' wiring error in the round after the rotation")
     ap.add_argument("--rewrite", action="append", default=[], metavar="STAGE=REWRITE",
                     help="rewrite one stage with its own rewrite, e.g. \"X checks=x-z gpf_checks\" (repeatable)")
     ap.add_argument("--save", metavar="FILE", help="save the window to FILE instead of opening it")

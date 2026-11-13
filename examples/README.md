@@ -103,16 +103,16 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   every one of the 1024 runs its detectors allow, against T†|+⟩ in the colour code of the faces
   (Part 6 of `Cultivation.ipynb` does 4); about nine hours on a laptop, `--start`/`--end` to split
   the runs, `--log FILE`. All 1024 are equal.
-- [DecompilationFlow.ipynb](DecompilationFlow.ipynb) — L. Yeh's decompilation flow chart (Section 5 of the paper),
+- [DecompilationFlow.ipynb](DecompilationFlow.ipynb) — the decompilation flow chart (Section 5 of the paper),
   box by box: a Clifford gate read as its tableau and isometry AP normal form (fold-transversal H, with the Pauli
   frame as a formula in the results); a block that measures read from the AP form of its Choi state; transversal
   T on the [[15,1,3]] code split into a Clifford part and one phase effect (`clifford_part`); and a test that the
   chart's way and the matrix way give the same answers on every block of four programs (`with_route`, `named_by`).
 - [StabilizerCodes.ipynb](StabilizerCodes.ipynb) — the three questions for codes that are not CSS. The
   [[5,1,3]] code read off a ring of `CZ` gates (its stabilizers mix `X` and `Z`); its ideal encoder, built
-  from the Choi state following Yeh et al., checked with numpy against its definition, and drawn
+  from the Choi state following the three-way normal form paper, checked with numpy against its definition, and drawn
   after PyZX's spider rules as the ring graph code (five qubits in a ring of CZs, the input copied
-  onto all five), and in the isometry AP normal form of Yeh et al. (`iap_normal_form`: a Clifford
+  onto all five), and in the isometry AP normal form of the three-way normal form paper (`iap_normal_form`: a Clifford
   on the inputs, a CSS core, a diagonal Clifford on the outputs); a program that
   encodes, measures the checks and applies `H` then `S` on every qubit, which the tool finds to be the
   logical `SH`, transversal and keeping the code; `H` on every qubit, which leaves it; the Steane code
@@ -129,40 +129,40 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   circuit distance 2 when the cube state is prepared without checks (one fault in preparing it, one in a gauge
   measurement), 3 once four of its faces are measured first.
 - [GateTeleportation.ipynb](GateTeleportation.ipynb) — a logical CX between the two logical qubits of one block
-  of the 2×2 toric code [[8,2,2]], by gate teleportation through a second block (L. Yeh's thesis, Eq. (6.42)):
+  of the 2×2 toric code [[8,2,2]], by gate teleportation through a second block:
   teleport c into the ancilla, swap c and t there (a reordering of the qubits, `add_permutation`), a
-  transversal CX, swap back, teleport c back. First the diagram of Eq. (6.42) on four logical wires, rewritten
+  transversal CX, swap back, teleport c back. First the gate-teleportation diagram on four logical wires, rewritten
   step by step (`to_gpf_steps`) into a CX with the ancilla's t in |0⟩; then the 17-qubit circuit, whose normal
   form is the toric code's encoder after that CX. The tool follows c into the ancilla and back, finds the whole
   program to be a CX from c to t in every run, and circuit distance 1 when c is measured once (one flipped
   result), 2 when it is measured twice (`circuit_distance(..., several_logicals=True)`).
-- [GateTeleportationStepByStep.ipynb](GateTeleportationStepByStep.ipynb) — Eq. (6.42) of L. Yeh's thesis
+- [GateTeleportationStepByStep.ipynb](GateTeleportationStepByStep.ipynb) — the gate-teleportation derivation
   level by level: the circuit of its first diagram on four logical wires, levelled up with one rewrite per level
-  (`'thesis notation'`, `'copy and fuse'`, `'remove identities'`, each made of PyZX's single rules), so that the
+  (`'standard notation'`, `'copy and fuse'`, `'remove identities'`, each made of PyZX's single rules), so that the
   levels' pictures (`reduced_level`) are the five diagrams of the equation, down to a CX from c to t; each checked
   against the circuit in every run, and the levels window (`view_levels`).
 - [TransversalCCZ.ipynb](TransversalCCZ.ipynb) — the [[8,3,2]] code (eight qubits on the corners of a cube,
-  three logical qubits) and its transversal CCZ, as in L. Yeh's thesis, Section 6.5: the encoder of Eq. (6.27),
+  three logical qubits) and its transversal CCZ, the encoder (a GHZ state on five qubits, then CNOTs from the inputs),
   then T on four corners and T† on the other four. The tool finds the code (its checks drawn as a cube), the
   encoder as the identity and the T layer as a CCZ in every run, transversal; the whole circuit reduces to seven
   phase gadgets on x, y, z (phase polynomial π·xyz) followed by the encoder, and E; P; E† to the same CCZ,
   equal to PyZX's CCZ gate.
-- [TransversalCCZStepByStep.ipynb](TransversalCCZStepByStep.ipynb) — Eqs. (6.45) and (6.46) of the thesis level
+- [TransversalCCZStepByStep.ipynb](TransversalCCZStepByStep.ipynb) — the transversal-CCZ derivation level
   by level: the circuit of E; P; E†, then one level for each group of CNOTs moved through P (`'phase gadgets'`)
   and one for the spider-nest identity (`'spider nest'`), down to the seven gadgets of the CCZ; each level
   checked against the circuit, and the levels window.
 - [MagicStateDistillation.ipynb](MagicStateDistillation.ipynb) — eight T states to one CCZ state with the
-  [[8,3,2]] code (L. Yeh's thesis, Eqs. (6.47)-(6.49)): the encoded |+++⟩, the T layer, decoding and five checks.
+  [[8,3,2]] code: the encoded |+++⟩, the T layer, decoding and five checks.
   The tool finds the protocol to prepare CCZ|+++⟩ in every run with its checks always 0, reduces it to the
-  CCZ state, and finds the thesis's form (the magic states decoded directly) the same where its results are 0
+  CCZ state, and finds the reference form (the magic states decoded directly) the same where its results are 0
   but steered by them otherwise. With independent Z errors on the magic states (`pauli_errors`, all 256
   patterns): every single error caught, every pair missed, output error 28p² to leading order.
-- [MagicStateDistillationStepByStep.ipynb](MagicStateDistillationStepByStep.ipynb) — Eq. (6.48) checked as two
-  programs, and Eq. (6.49) level by level, one rewrite per level (`'thesis notation'`, `'x-z gpf'`,
+- [MagicStateDistillationStepByStep.ipynb](MagicStateDistillationStepByStep.ipynb) — the distillation identity checked as two
+  programs, and the decoding derivation level by level, one rewrite per level (`'standard notation'`, `'x-z gpf'`,
   `'copy and fuse'`, `'remove identities'`): the |+⟩ states copied through the decoder, down to the
   three-legged H-box.
 - [FindingCorrections.ipynb](FindingCorrections.ipynb) — the tool finds the Pauli corrections a protocol needs
-  (`find_corrections`, L. Yeh's "universal gadget fixing": X ones off the Z-X normal form, Z ones off the X-Z
+  (`find_corrections`: X ones off the Z-X normal form, Z ones off the X-Z
   normal form, then every run checked to be the run with every outcome 0). Teleportation; the gate
   teleportation of [GateTeleportation.ipynb](GateTeleportation.ipynb) with its corrections taken out; a CNOT
   by lattice surgery between three distance-2 surface-code patches (the byproducts, plus an X that repairs a
@@ -171,8 +171,8 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   per level (`'gpf'`, `'unfuse outcomes'`, `'x-z gpf'`, `'unfuse outcomes'`), on teleportation and on the
   lattice surgery: the outcome phases left on the outputs are the corrections; each level checked against the
   circuit.
-- [ShorCode.ipynb](ShorCode.ipynb) — Shor's nine-qubit code, after the three-qubit bit-flip code of L. Yeh's
-  thesis, Section 4.2. The bit-flip code catches every single X but no single Z (Eq. (4.12), every pattern tried
+- [ShorCode.ipynb](ShorCode.ipynb) — Shor's nine-qubit code, after the three-qubit bit-flip code.
+  The bit-flip code catches every single X but no single Z (every pattern tried
   with `pauli_errors`). Shor's code: the [[9,1,3]] code (equal to PyZX's CSS code from its checks), one round of
   its eight checks the identity in every run with every result 0, the whole circuit reduced to the code's
   encoder (an H in the tool's names of the logical operators: Shor's |0⟩ is the tool's |+⟩); every error on one
@@ -185,7 +185,7 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   the run), Table 1 for all 31 errors (printed, grouped as in the paper: an X is fixed at level 1, a Z passes
   level 1 as a Z on its block and is fixed at level 2), and the two levels with `rewrite='gpf'` in the levels
   view: Shor's encoder with Z4 left as a sign on one check, then Shor's encoder.
-- [ShorCodeStepByStep.ipynb](ShorCodeStepByStep.ipynb) — Eqs. (4.5), (4.7)-(4.10) and (4.12) of the thesis level by
+- [ShorCodeStepByStep.ipynb](ShorCodeStepByStep.ipynb) — the bit-flip code's encoder, parity check and single-error check level by
   level, one rewrite per level (`'copy and fuse'`, `'copy results'`, `'spider_simp'`, `'remove identities'`):
   the encoder, the parity check and what it measures, checks pushed into the encoder, a phase flip that is a
   logical Z; then Shor's encoder as the phase-flip code on top of three bit-flip codes, where a phase flip stops
@@ -201,7 +201,7 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
 - [LatticeSurgeryStepByStep.ipynb](LatticeSurgeryStepByStep.ipynb) — Kissinger's Section 7.1 derivations on 3×3
   patches as level-ups, drawn on the chip from above as he draws them: the Z-split of a 6×3 patch (the outcome
   moves into the checks next to the cut, the logical picture is a Z-copy) and the X-merge of two 3×3 patches (kπ on an input, the logical picture a red merge after a green
-  kπ); then L. Yeh's recipe on the split as two more level-ups (the X-Z normal form puts the split's outcome
+  kπ); then the correction recipe on the split as two more level-ups (the X-Z normal form puts the split's outcome
   on the outputs, one on each side of the cut: the corrections), ending with the dagger of the run with every
   outcome 0, after which one outcome phase is left.
 - [WhichCodeStepByStep.ipynb](WhichCodeStepByStep.ipynb) — how `code_at` / `code_of` reads a code, one step at a
@@ -227,7 +227,7 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
 - [StabilizerCodesStepByStep.ipynb](StabilizerCodesStepByStep.ipynb) — a code that is not CSS, step by step:
   the repetition code of the paper with an S on qubit 0, then a T on the parity of the three qubits. The
   generators of the encoder's Choi state, its reduced AP form, the isometry AP normal form E = U_O . C . U_I
-  of Yeh et al. (Algorithm 3: U_I empty, the core the repetition code, U_O the S), and the logical action of
+  of the three-way normal form paper (Algorithm 3: U_I empty, the core the repetition code, U_O the S), and the logical action of
   the diagonal block through the normal forms: U_O cancels, the block is checked on the CSS core, one phase
   gadget of pi/4 on the logical bit, a logical T, the same as through the ideal encoders.
 - [ComparingPrograms.ipynb](ComparingPrograms.ipynb) — are two programs the same *logically*? A
@@ -259,7 +259,7 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   then Shor's encoder (`python examples/interactive_shor_levels.py [--error E] [--save FILE]`, E one of
   X0..Z8, X0X1, X0X3, Z0Z1, Z0Z3, none).
 - [DecomposingTerms.ipynb](DecomposingTerms.ipynb) — a block as a sum of terms, one for each value of its
-  hidden spiders (`decompose_terms`, L. Yeh's decomposition), and what each term does to each qubit and
+  hidden spiders (`decompose_terms`), and what each term does to each qubit and
   to X, Y, Z errors. On the d = 3 cultivation double-check the terms depend on how the hidden bit is
   labelled: as reduced they link all code qubits; with `'fewest links'` they are "nothing" and T X T†
   on every qubit (Y with S for T). The check for distance: every term maps each Pauli error to the same
@@ -272,7 +272,7 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   recognising a code (`check_diagram`, each check shaded): the Steane code's three faces, the same
   whatever the qubits' order, the [[8,3,2]] code as a cube, the surface code as a grid of plaquettes, and
   the [[15,1,3]] code as a tetrahedron cut into four cells (`pip install zxqec[layout]`).
-- [DistanceChecking.ipynb](DistanceChecking.ipynb) — L. Yeh's distance-checking pipeline (`check_distance`):
+- [DistanceChecking.ipynb](DistanceChecking.ipynb) — the distance-checking pipeline (`check_distance`):
   the stages cut by gate type, the circuit distance of every Clifford run, and the non-Clifford stages
   grouped and checked term by term. On d = 3 cultivation the double-check fails the check, as its fault
   distance with real T (2) says.
@@ -327,8 +327,8 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   (`python examples/interactive_fold_h_levels_3d.py [default|top|front|side] [--miswired] [--save FILE]`).
 - [TriorthogonalStepByStep.ipynb](TriorthogonalStepByStep.ipynb) — transversal T on the [[15,1,3]] code,
   following the paper's subsection on triorthogonal codes: the code after the T layer (the same code; with T on
-  seven qubits a [[15,4,1]] code), the thesis's matrix M of which gadget reads which spider and its three counts
-  (Definition 4.4.1), the phase polynomial that holds the same counts and leaves 7pi/4 on the logical bit
+  seven qubits a [[15,4,1]] code), the matrix M of which gadget reads which spider and its three counts,
+  the phase polynomial that holds the same counts and leaves 7pi/4 on the logical bit
   (T^dag), `summary`, `compare_programs` against "T^dag, then encode" (equivalent; with T on seven qubits not, 1
   detector instead of 4), the detectors after the T layer, and the distances (`z_distance_through_t`: 3).
 - [interactive_triorthogonal_levels.py](interactive_triorthogonal_levels.py) — that program in the levels
@@ -339,7 +339,7 @@ interactive views are still there: PyZX's `zx.draw`, `draw_web` and `draw_progra
   code drawn on the grid (`StabilizerCode.draw_layout`), the program, the code after every stage (the code with X
   and Z swapped after the Hadamards, and the surface code again after the quarter turn, compared by position),
   `summary` for the six blocks, the whole program (a Hadamard followed by Paulis the results determine, 24
-  detectors), the thesis files' check on the wrong qubit (one problem flagged, 22 detectors, a [[9,1,1]] code
+  detectors), the original files' check on the wrong qubit (one problem flagged, 22 detectors, a [[9,1,1]] code
   right after it, and one Z error that the correct program catches and the mis-wired one does not), and the
   levels window.
 

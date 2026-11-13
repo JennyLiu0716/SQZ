@@ -1,6 +1,6 @@
 """The fold-transversal Hadamard in the levels window, every block but the Hadamard and the turn in GPF.
 
-The program is the thesis's (``build_program`` in interactive_fold_h_3d.py), with one
+The program is the one of ``build_program`` in interactive_fold_h_3d.py, with one
 level on top of its stages: each stage is a block of its own, and every block is
 rewritten by ``'gpf'`` except the transversal Hadamard and the quarter turn of the
 grid (the permutation), which stay as they are; the Z checks of code 2 and the Z
@@ -17,7 +17,7 @@ move between blocks. Run from a terminal:
 
     python examples/interactive_fold_h_gpf_3d.py               # the program
     python examples/interactive_fold_h_gpf_3d.py top           # start from the bird's-eye view (also: front, side)
-    python examples/interactive_fold_h_gpf_3d.py --miswired    # with the thesis files' wiring error
+    python examples/interactive_fold_h_gpf_3d.py --miswired    # with the original files' wiring error
     python examples/interactive_fold_h_gpf_3d.py --rewrite "X checks=x-z gpf"   # one stage in X-Z form
     python examples/interactive_fold_h_gpf_3d.py --save fig.png   # write the window to a file instead
 """
@@ -80,7 +80,7 @@ def stage_rewrites(pairs: list[str]) -> dict[str, str]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("view", nargs="?", default="default", choices=sorted(VIEWS), help="starting viewpoint")
-    ap.add_argument("--miswired", action="store_true", help="the thesis files' wiring error in the round after the rotation")
+    ap.add_argument("--miswired", action="store_true", help="the original files' wiring error in the round after the rotation")
     ap.add_argument("--rewrite", action="append", default=[], metavar="STAGE=REWRITE",
                     help="rewrite one stage with its own rewrite, e.g. \"X checks=x-z gpf\" (repeatable)")
     ap.add_argument("--save", metavar="FILE", help="save the window to FILE instead of opening it")

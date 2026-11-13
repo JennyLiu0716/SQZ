@@ -1,4 +1,4 @@
-"""zxqec.qprogram.check_distance: L. Yeh's distance-checking pipeline over the stages of a program."""
+"""zxqec.qprogram.check_distance: the distance-checking pipeline over the stages of a program."""
 import os
 
 import pytest

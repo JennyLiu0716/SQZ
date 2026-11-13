@@ -14,9 +14,9 @@
 
 """Generalized parity form (GPF) with phases: extraction and reduction.
 
-* :func:`to_gpf` -- Algorithm 2 of the thesis generalised to Pauli (incl.
+* :func:`to_gpf` -- the phase-free GPF algorithm generalised to Pauli (incl.
   Boolean-symbolic) phases on the spiders; non-Pauli phases become gadgets;
-* :func:`reduce_gpf` -- Algorithm 3: split-matrix row reduction over GF(2) of
+* :func:`reduce_gpf` -- split-matrix row reduction over GF(2) of
   both layers with the phases carried along, yielding a minimal GPF, the
   detectors (Boolean parities of outcomes that must vanish) and a zero flag;
 * :func:`equal_for_all_assignments` -- tensor equality for every assignment of
@@ -35,7 +35,7 @@
   X, Y, Z errors; the check for distance is that every term maps each Pauli
   error to the same Pauli.
 * :func:`copy_leaf` -- the copy rule for a spider with one leg whose phase is a
-  measurement result; :func:`thesis_notation`, :func:`copy_and_fuse` and
+  measurement result; :func:`standard_notation`, :func:`copy_and_fuse` and
   :func:`remove_identities` -- the steps of a derivation by hand, made of single
   rules (also level-up rewrites by those names); :func:`phase_gadgets` -- the
   non-Pauli phases on gadgets, drawn along the wires; :func:`x_z_normal_form` --
@@ -51,7 +51,7 @@ from .reduce import (GPFResult, boolean_variables, consistent_assignments, const
                      equal_for_all_assignments, evaluate_phase, phases_modulo, reduce_gpf, reduce_modulo,
                      same_map, sample_consistent_assignment, unsatisfiable)
 from .report import Measurement, MeasurementReport, measurement_report
-from .rules import (copy_and_fuse, copy_leaf, phase_gadgets, remove_identities, thesis_notation, unfuse_outcomes,
+from .rules import (copy_and_fuse, copy_leaf, phase_gadgets, remove_identities, standard_notation, unfuse_outcomes,
                     x_z_normal_form)
 from .terms import Decomposition, Part, Piece, Term, decompose_terms
 
@@ -65,6 +65,6 @@ __all__ = [
     'push_hadamards_to_boundary', 'restore_boundary_hadamards', 'has_boundary_hadamard',
     'BOUNDARY_HADAMARD_KEY', 'simplify_gadgets', 'phase_polynomial', 'normalize_gadget_angles', 'open_leaves',
     'decompose_terms', 'Decomposition', 'Part', 'Term', 'Piece', 'copy_leaf',
-    'thesis_notation', 'copy_and_fuse', 'remove_identities', 'phase_gadgets', 'x_z_normal_form',
+    'standard_notation', 'copy_and_fuse', 'remove_identities', 'phase_gadgets', 'x_z_normal_form',
     'unfuse_outcomes',
 ]

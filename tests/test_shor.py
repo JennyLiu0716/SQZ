@@ -1,4 +1,4 @@
-"""Shor's nine-qubit code, and the bit-flip code of L. Yeh's thesis, Section 4.2 (examples/ShorCode.ipynb and
+"""Shor's nine-qubit code, and the three-qubit bit-flip code (examples/ShorCode.ipynb and
 examples/ShorCodeStepByStep.ipynb)."""
 from pyzx.circuit import Circuit
 from pyzx.circuit.gates import CNOT, HAD, Z, Measurement, PostSelect
@@ -89,13 +89,13 @@ def test_the_order_of_the_x_checks_sets_the_circuit_distance():
     assert len(hook) == 1 and hook[0].pauli == 'X16'
 
 
-def test_the_thesis_diagrams_level_by_level_as_in_the_step_by_step_notebook():
-    # Eq. (4.5): one Z-spider, the input copied onto three outputs
+def test_the_bit_flip_diagrams_level_by_level_as_in_the_step_by_step_notebook():
+    # the encoder: one Z-spider, the input copied onto three outputs
     p = _program(3, 0, {1: '0', 2: '0'}, [('encoder', [CNOT(0, 1), CNOT(0, 2)])])
     last = p.level_up(p.level_up(0, 0, 0, rewrite='copy and fuse'), 0, 0, rewrite='remove identities')
     g = p.reduced_level(last).graph
     assert [g.type(v) for v in _spiders(g)] == [VertexType.Z] and equal_for_all_assignments(p.quantum_graph(), g)
-    # Eq. (4.8): |a>|b> through the check post-selected on 0 is |a>|b> times (1 + e^{i pi (a+b)})/2
+    # the parity check: |a>|b> through the check post-selected on 0 is |a>|b> times (1 + e^{i pi (a+b)})/2
     p = _program(4, 1, {0: '0', 1: '0', 3: '0'}, [
         ('|a>, |b>', [ParityControlled('X', 0, ['a']), ParityControlled('X', 1, ['b'])]),
         ('Z Z', [CNOT(0, 3), CNOT(1, 3), PostSelect(3, '0')])])

@@ -1,4 +1,4 @@
-"""Gate teleportation (L. Yeh's thesis, Proposition 6.41 and Eq. (6.42)): a logical CX between the two logical
+"""Gate teleportation: a logical CX between the two logical
 qubits of one block of the 2x2 toric code, through an ancilla block (examples/GateTeleportation.ipynb)."""
 import itertools
 
@@ -66,7 +66,7 @@ def _wiring(g):
 
 
 def test_eq_6_42_on_logical_qubits_rewrites_to_a_cx_and_the_ancillas_t_in_0():
-    # wires: c, t of the data block, c, t of the ancilla; measure c, prepare it again, as drawn in the thesis
+    # wires: c, t of the data block, c, t of the ancilla; measure c, prepare it again, as in the reference drawing
     p = QProgram(4, bits=2, initial_states={2: '+', 3: '0'})
     for gates, physical in (([CNOT(2, 0), CNOT(3, 1), Measurement(0, 0), Reset(0), ParityControlled('X', 2, ['c[0]'])],
                              False), ([CNOT(2, 0), CNOT(3, 1)], True),
@@ -202,7 +202,7 @@ def test_eq_6_42_level_by_level_as_in_the_step_by_step_notebook():
     circuit = p.quantum_graph()
     runs = reduce_gpf(circuit).constraints
     assert [str(x) for x in runs] == ['s0_r0 + c[0]']
-    notation = p.group_stages([(s, s, None, None, 'thesis notation') for s in range(5)])
+    notation = p.group_stages([(s, s, None, None, 'standard notation') for s in range(5)])
     copied_in = p.level_up(notation, 0, 0, rewrite='copy and fuse')
     wire_in = p.level_up(copied_in, 0, 0, rewrite='remove identities')
     through_cx = p.level_up(wire_in, 0, 3, rewrite='copy and fuse')
@@ -211,7 +211,7 @@ def test_eq_6_42_level_by_level_as_in_the_step_by_step_notebook():
     assert (notation, done) == (5, 10)
     pictures = [p.reduced_level(level).graph for level in (notation, copied_in, wire_in, through_cx, copied_back, done)]
     assert all(equal_for_all_assignments(circuit, h, constraints=runs) for h in pictures)
-    # the five diagrams of Eq. (6.42) have 19, 15, 10, 6 and 3 spiders; level 7 (12) lies between the second and third
+    # the five diagrams of the gate-teleportation derivation have 19, 15, 10, 6 and 3 spiders; level 7 (12) lies between the second and third
     assert [sum(1 for v in h.vertices() if h.type(v) != VertexType.BOUNDARY) for h in pictures] == [19, 15, 12, 10, 6, 3]
     # the last: a CX from c (data wire 2) to t (wire 3), and |0> on the ancilla's t
     last = pictures[-1]

@@ -1,4 +1,4 @@
-"""zxqec.codes.iap_normal_form: Clifford isometries in isometry affine-with-phases normal form (Yeh et al., Thm 4.2).
+"""zxqec.codes.iap_normal_form: Clifford isometries in isometry affine-with-phases normal form (the three-way normal form paper, Thm 4.2).
 
 Every normal form is checked against the isometry it came from by tensor contraction
 (PyZX's, in every run the signs allow), and the same map presented in different ways
@@ -369,7 +369,7 @@ def test_named_codes():
     assert kinds == {True, False}
 
 
-# -- logical_action through the normal forms (thesis, Section 4.5) -------------------------------------------
+# -- logical_action through the normal forms ---------------------------------------------------------------
 
 def _same_up_to_scalar(a, b, constraints=()):
     from pyzx.graph.scalar import Scalar

@@ -18,7 +18,7 @@ A protocol with measurements does a different map in each run. When the
 difference is a Pauli on its outputs that the outcomes determine (a *Pauli
 frame*), applying that Pauli, controlled by those outcomes, makes every run do
 what the run with every outcome 0 does. :func:`find_corrections` reads the Paulis
-off the normal forms, following L. Yeh's "universal gadget fixing":
+off the normal forms:
 
 1. In the Z-X normal form of the program (:func:`~zxqec.gpf.reduce_gpf`) each
    output has an X-spider. The part of its phase that depends on the outcomes,

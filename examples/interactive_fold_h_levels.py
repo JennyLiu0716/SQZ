@@ -1,6 +1,6 @@
 """The fold-transversal Hadamard on the surface code, a program that changes codes, in the interactive levels window.
 
-The program is the thesis's (``build_program`` in interactive_fold_h_3d.py): the
+The program is the one of ``build_program`` in interactive_fold_h_3d.py: the
 input copied into the distance-3 surface code with a round of X checks, a
 Hadamard on every data qubit (which turns the code into the one with X and Z
 swapped), a round of checks of that code, a quarter turn of the grid (which
@@ -16,7 +16,7 @@ moves between levels, the buttons (or the left/right arrow keys) between blocks.
 Run from a terminal:
 
     python examples/interactive_fold_h_levels.py               # the program
-    python examples/interactive_fold_h_levels.py --miswired    # with the thesis files' wiring error
+    python examples/interactive_fold_h_levels.py --miswired    # with the original files' wiring error
     python examples/interactive_fold_h_levels.py --save fig.png   # write the window to a file instead
 """
 
@@ -51,7 +51,7 @@ def build(miswired: bool):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--miswired", action="store_true", help="the thesis files' wiring error in the round after the rotation")
+    ap.add_argument("--miswired", action="store_true", help="the original files' wiring error in the round after the rotation")
     ap.add_argument("--save", metavar="FILE", help="save the window to FILE instead of opening it")
     args = ap.parse_args()
     if args.save is None and plt.get_backend().lower() == 'agg':

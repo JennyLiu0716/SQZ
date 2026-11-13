@@ -76,7 +76,7 @@ def test_t_and_t_dagger_on_one_parity_cancel():
 
 
 def test_a_triorthogonal_layer_is_the_identity():
-    # thesis Fig. 4.11: 16 pi/4 gadgets on 5 bits whose parity matrix is triorthogonal
+    # 16 pi/4 gadgets on 5 bits whose parity matrix is triorthogonal
     m_t = [[1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0],
            [1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0],
            [1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0],

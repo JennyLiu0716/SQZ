@@ -1,4 +1,4 @@
-"""zxqec.gpf.decompose_terms: a reduced diagram as a sum of terms over its hidden spiders (L. Yeh's decomposition)."""
+"""zxqec.gpf.decompose_terms: a reduced diagram as a sum of terms over its hidden spiders."""
 import os
 
 import pytest

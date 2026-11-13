@@ -14,7 +14,7 @@
 
 """Naming a Clifford class of runs without a matrix: the Clifford branch of the decompilation flow.
 
-The paper's methodology (its flow chart, after Yeh) takes the logical map
+The paper's methodology (its flow chart) takes the logical map
 ``L = E ; P ; E^dag`` and, when ``L`` is Clifford, brings it to a normal form
 instead of evaluating it. This module does that for one class of runs: the
 results are fixed, every phase is a multiple of ``pi/2``, and the map is read

@@ -12,7 +12,7 @@ blocks until it is closed):
     python examples/interactive_fold_h_3d.py --stage 4       # one stage only: the rotation
     python examples/interactive_fold_h_3d.py --block 2 2     # one block only: block 2 of level 2 (the QEC round of code 2)
     python examples/interactive_fold_h_3d.py --phases        # label the spiders with their phases (outcome variables)
-    python examples/interactive_fold_h_3d.py --miswired      # the thesis files' wiring error (ComparingPrograms.ipynb)
+    python examples/interactive_fold_h_3d.py --miswired      # the original files' wiring error (ComparingPrograms.ipynb)
     python examples/interactive_fold_h_3d.py --n-order       # CNOTs of stages 3 and 5 in N order (CircuitDistance.ipynb)
     python examples/interactive_fold_h_3d.py --save fig.png  # write the figure to a file instead of opening a window
 
@@ -26,7 +26,7 @@ Mouse controls (matplotlib's standard 3D navigation):
 * pan: middle-click and drag, or the pan tool in the toolbar; the toolbar's
   home button resets the view.
 
-The spatial layout is the thesis's: the 3x3 data grid ``q[1..9]`` with the
+The spatial layout is the original one: the 3x3 data grid ``q[1..9]`` with the
 X-check ancillas ``q[10..13]`` and Z-check ancillas ``q[14..17]`` between the
 plaquettes, the logical input ``q[0]`` and the decode ancilla ``q[18]`` on the
 left (see ``circuits/ft_h/README.md`` for the qubit roles).
@@ -61,7 +61,7 @@ CIRCUITS = os.path.join(HERE, "circuits", "ft_h")
 N, BITS = 19, 35
 X_ANC, Z_ANC = [10, 11, 12, 13], [14, 15, 16, 17]
 
-# thesis layout of the 19 qubits: (x, y) of every physical wire
+# original layout of the 19 qubits: (x, y) of every physical wire
 COORDS = {0: (0, 0), 1: (1, 1), 2: (2, 1), 3: (3, 1), 4: (1, 2), 5: (2, 2), 6: (3, 2), 7: (1, 3), 8: (2, 3), 9: (3, 3),
           10: (2.5, 0.5), 11: (1.5, 1.5), 12: (2.5, 2.5), 13: (1.5, 3.5),
           14: (0, 1.5), 15: (2.5, 1.5), 16: (1.5, 2.5), 17: (3.5, 2.5), 18: (0, 4)}
@@ -94,11 +94,11 @@ def build_topology(places: dict[int, tuple[float, float]] | None = None) -> Topo
     return topo
 
 
-def build_program(miswired: bool = False, cnot_order: str = "thesis", z_error: int | None = None,
+def build_program(miswired: bool = False, cnot_order: str = "original", z_error: int | None = None,
                   prepare_when_used: bool = False, places: dict[int, tuple[float, float]] | None = None) -> QProgram:
     """The protocol as in the notebook, plus two levels grouping the stages into the protocol's phases.
 
-    ``miswired`` puts back the wiring error of the thesis's circuit files: one Z check of the round
+    ``miswired`` puts back the wiring error of the original circuit files: one Z check of the round
     after the rotation on data qubit 2 instead of 4 (``ComparingPrograms.ipynb``, Part 2).
     ``cnot_order="N"`` takes the X checks of code 2 and the Z checks after the rotation from the
     ``*_n_order.qasm`` files, whose weight-4 checks run their CNOTs in N order; the noiseless program
@@ -113,8 +113,8 @@ def build_program(miswired: bool = False, cnot_order: str = "thesis", z_error: i
     half a step left of the grid like the other ancillas around it (``COORDS`` keeps it at x = 0, off the edge
     from qubit 0 at (0, 0) to qubit 7, which passes through (0.5, 1.5)).
     """
-    if cnot_order not in ("thesis", "N"):
-        raise ValueError("cnot_order must be 'thesis' or 'N'")
+    if cnot_order not in ("original", "N"):
+        raise ValueError("cnot_order must be 'original' or 'N'")
     suffix = "_n_order" if cnot_order == "N" else ""
     ft_h_5 = load("ft_h_5" + suffix)
     if miswired:
@@ -149,7 +149,7 @@ def main() -> None:
     ap.add_argument("--stage", type=int, metavar="I", help="draw only the sub-diagram of stage I")
     ap.add_argument("--block", type=int, nargs=2, metavar=("LEVEL", "I"), help="draw only the sub-diagram of block I of LEVEL")
     ap.add_argument("--phases", action="store_true", help="label the spiders with their phases")
-    ap.add_argument("--miswired", action="store_true", help="the thesis files' wiring error in the round after the rotation")
+    ap.add_argument("--miswired", action="store_true", help="the original files' wiring error in the round after the rotation")
     ap.add_argument("--n-order", action="store_true", help="weight-4 checks of stages 3 and 5 with their CNOTs in N order")
     ap.add_argument("--save", metavar="FILE", help="save the figure to FILE instead of opening a window")
     args = ap.parse_args()
@@ -157,7 +157,7 @@ def main() -> None:
         sys.exit("matplotlib is using the non-interactive Agg backend; run this from a terminal "
                  "with a GUI backend (e.g. TkAgg, QtAgg), or pass --save FILE")
 
-    p = build_program(miswired=args.miswired, cnot_order="N" if args.n_order else "thesis")
+    p = build_program(miswired=args.miswired, cnot_order="N" if args.n_order else "original")
     for level in range(p.levels.num_levels):
         print("level {}:\n{}".format(level, p.describe_level(level)))
 

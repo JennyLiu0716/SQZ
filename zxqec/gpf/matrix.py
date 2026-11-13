@@ -33,8 +33,7 @@ bit is a free summation variable, not fixed by a boundary or a gadget) and
 Pauli-phased. Row ``j`` may be anything. :func:`reduce_rows` is Gauss-Jordan
 elimination with that restriction: pivots are free rows only, chosen column by
 column over the internal columns; anchored rows are never used as a source and
-therefore never contaminate each other (the thesis's boundary-isolation
-argument), but they do absorb free rows. A free row that becomes all-zero is a
+therefore never contaminate each other (boundary isolation), but they do absorb free rows. A free row that becomes all-zero is a
 spider that lost every edge, i.e. the scalar ``1 + e^{i pi p}`` for its phase
 ``p``: ``2`` if ``p = 0``, ``0`` if ``p = 1``, and for a symbolic ``p`` the
 constraint ``p = 0`` -- a detector of the measurement outcomes.

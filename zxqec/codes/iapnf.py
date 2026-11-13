@@ -14,9 +14,8 @@
 
 """The isometry affine-with-phases normal form (iAPNF) of a Clifford isometry.
 
-Yeh, Huang, Kissinger, Li and van de Wetering (*A three-way normal form for
-stabiliser codes*, Section 4.4, Algorithm 3 and Theorem 4.2, in preparation)
-write every Clifford isometry ``E`` from ``k`` logical qubits to ``n``
+*A Three-Way Normal Form for Stabiliser Codes across ZX Diagrams, Circuits,
+and Tableaus* (QPL 2026; Section 4.4, Algorithm 3 and Theorem 4.2) writes every Clifford isometry ``E`` from ``k`` logical qubits to ``n``
 physical qubits, such as the ideal encoder of a stabilizer code, as three
 layers:
 
@@ -128,7 +127,7 @@ def _product(paulis: Sequence[_Pauli], coeffs: Any, n: int) -> _Pauli:
 
 @dataclass
 class APForm:
-    """A stabilizer state in reduced affine-with-phases form (Yeh et al., Definition 4.1), up to a scalar:
+    """A stabilizer state in reduced affine-with-phases form (the three-way normal form paper, Definition 4.1), up to a scalar:
 
     ``sum_(a : B a = b) i^(sum_f A_ff a_f) (-1)^(sum_(f<g) A_fg a_f a_g) |a>``.
 
@@ -173,7 +172,7 @@ class APForm:
         """The ZX-diagram of the form; the first ``inputs`` variables are drawn as inputs, on the left.
 
         With ``inputs = k`` the diagram of the Choi state of an isometry from
-        ``k`` qubits is the isometry itself (Yeh et al., Eq. 20): input
+        ``k`` qubits is the isometry itself (the three-way normal form paper, Eq. 20): input
         variables in column 1, the X-spiders of the rows in column 2.5 (a
         quarter row down, off the straight lines between the two columns), the
         output variables in column 4.
@@ -394,7 +393,7 @@ def reduced_ap_form(e: Any) -> APForm:
 
     ``e`` is a :class:`~zxqec.codes.StabilizerCode` (its ideal encoder) or a
     ZX-diagram of a Clifford isometry, as for :func:`iap_normal_form`, which
-    starts from this form (step 1 of Yeh et al.'s Algorithm 3). The variables
+    starts from this form (step 1 of Algorithm 3 of the three-way normal form paper). The variables
     are named ``in0, in1, ...`` and then by the qubits of the outputs.
     """
     n, k, stabs, lx, lz, qubits = _isometry_of(e)
@@ -528,7 +527,7 @@ def _reduced_ap_form(gens: list[_Pauli], labels: tuple[str, ...]) -> APForm:
 
 
 def _from_ap_form(ap: APForm, n: int, k: int, qubits: tuple[Any, ...]) -> IAPNormalForm:
-    """Yeh et al.'s Algorithm 3 on the reduced AP form of a Choi state (inputs ``0..k-1``, then the outputs)."""
+    """Algorithm 3 of the three-way normal form paper on the reduced AP form of a Choi state (inputs ``0..k-1``, then the outputs)."""
     free = ap.free
     edges = {frozenset(e) for e in ap.cz}
     joined = lambda f: np.array([int(frozenset((f, k + j)) in edges) for j in range(n)], np.uint8)

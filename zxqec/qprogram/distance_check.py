@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Distance checking over the stages of a program (L. Yeh's pipeline).
+"""Distance checking over the stages of a program.
 
 :func:`check_distance` runs three steps.
 
@@ -389,7 +389,7 @@ def check_distance(program: QProgram, *, distance: bool = True, kind: str = 'ful
                    groups: Sequence[tuple[int, int]] | None = None, labelling: str = 'fewest links',
                    max_runs: int = 256, seed: int = 0, max_terms: int = 1024,
                    max_legs: int = 8, **distance_params: Any) -> DistanceCheck:
-    """L. Yeh's distance-checking pipeline on ``program`` (see the module docstring).
+    """The distance-checking pipeline on ``program`` (see the module docstring).
 
     ``distance=False`` skips the circuit distances of step 2 (which need ``stim`` and
     ``codedistance``); ``kind`` and ``distance_params`` go to

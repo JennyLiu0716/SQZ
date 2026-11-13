@@ -34,12 +34,12 @@
 * :func:`circuit_distance` -- the circuit distance of Clifford stages, with Stim
   and ``codedistance`` (optional dependencies); :func:`z_distance_through_t` --
   the Z distance of stages with ``T`` gates, after checking that removing them is exact;
-* :func:`check_distance` -- L. Yeh's distance-checking pipeline: stages cut by gate
+* :func:`check_distance` -- the distance-checking pipeline: stages cut by gate
   type (:func:`split_by_gate_type`), circuit distances of the Clifford runs, and the
   non-Clifford stages grouped and checked term by term (:func:`~zxqec.gpf.decompose_terms`);
 * :func:`find_corrections` -- the Pauli corrections, at the end of a program, that make
   every run do what the run with every outcome 0 does, read off the Z-X and X-Z
-  normal forms (L. Yeh's "universal gadget fixing");
+  normal forms;
 * :func:`pauli_errors` -- every pattern of Pauli errors at chosen places, sorted into
   caught by the checks, harmless and wrong: the leading term of the output error
   of a protocol that keeps only runs whose checks pass (e.g. magic-state distillation);

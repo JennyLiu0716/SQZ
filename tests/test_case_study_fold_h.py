@@ -1,4 +1,4 @@
-"""Regression test: thesis case study 1 (fold-transversal logical Hadamard) with symbolic outcomes."""
+"""Regression test: the fold-transversal logical Hadamard case study with symbolic outcomes."""
 import os
 import random
 

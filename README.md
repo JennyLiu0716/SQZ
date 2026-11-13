@@ -6,10 +6,6 @@ correction (QEC) protocols. A standalone library built **on top of**
 so users can extend it without modifying PyZX, and every PyZX simplification,
 extraction and tensor check keeps working on the diagrams it produces.
 
-It grows out of the MPhil thesis *A ZX-Calculus Based Software Framework for
-Designing and Verifying Dynamic Quantum Error Correction Protocols*
-(Chenxi Liu, University of Cambridge, 2026, supervised by Lia Yeh).
-
 ## Roadmap
 
 | Package | Purpose | Status |
@@ -95,15 +91,10 @@ which is where the detectors come from.
 
 ## Installation
 
-`pyzx.spacetime` is not in a PyPI release yet, so the dependency points at the
-`master` branch of the PyZX fork [JennyLiu0716/pyzx](https://github.com/JennyLiu0716/pyzx),
-which is upstream PyZX plus the pending pull requests. A plain install pulls it in:
-
-```bash
-pip install -e ".[dev]"
-```
-
-For development next to a PyZX checkout:
+`pyzx.spacetime` is not in a PyPI release of PyZX yet. The submission therefore
+bundles a snapshot of PyZX with it, in the folder `pyzx/` next to this one
+(upstream PyZX plus `pyzx.spacetime` and a few Boolean rewrite rules).
+Install that first, then this package:
 
 ```bash
 pip install -e ../pyzx
@@ -115,7 +106,7 @@ pip install -e ".[dev]"
 - Import `pyzx`; never monkey-patch or subclass its graph classes for storage.
   Extra per-spider information (coordinates, block ids, ...) is kept in
   vertex data (`g.vdata`), so any PyZX backend and rewrite keeps working.
-- Anything general enough for PyZX is contributed upstream by pull request;
+- Anything general enough for PyZX belongs in PyZX;
   QEC-specific machinery stays here.
 
 ## Tests

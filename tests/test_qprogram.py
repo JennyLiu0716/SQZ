@@ -68,7 +68,7 @@ def test_stage_graphs_equal_their_circuits():
         assert zx.compare_tensors(p.stage_graph(i), c.to_graph(), preserve_scalar=False)
 
 
-def test_from_circuit_per_gate_reproduces_thesis_model():
+def test_from_circuit_per_gate_model():
     c = circ(HAD(0), CNOT(0, 1), T(1))
     p = QProgram.from_circuit(c, per_gate=True)
     p.graph()

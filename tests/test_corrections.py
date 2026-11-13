@@ -1,5 +1,5 @@
-"""Finding Pauli corrections from the Z-X and X-Z normal forms (L. Yeh's "universal gadget fixing";
-examples/FindingCorrections.ipynb and examples/FindingCorrectionsStepByStep.ipynb)."""
+"""Finding Pauli corrections from the Z-X and X-Z normal forms
+(examples/FindingCorrections.ipynb and examples/FindingCorrectionsStepByStep.ipynb)."""
 from pyzx.circuit import Circuit
 from pyzx.circuit.gates import CNOT, HAD, T, Measurement
 from pyzx.utils import VertexType

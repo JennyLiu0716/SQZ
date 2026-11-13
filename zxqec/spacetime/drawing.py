@@ -32,8 +32,7 @@ Both views are matplotlib figures (matplotlib is imported lazily):
   :func:`draw_block_3d` / :func:`block_layout_3d` -- one block of a level, laid
   out the same way; :func:`draw_blocks_3d` -- every block of a level side by side.
 
-Ported from the thesis ``draw_topology_3d`` without its button widgets. Every
-function returns the figure: in a notebook it is displayed inline; in a script
+Every function returns the figure: in a notebook it is displayed inline; in a script
 call ``matplotlib.pyplot.show()`` to open it in a window, where the 3D views
 can be rotated and zoomed with the mouse.
 """

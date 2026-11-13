@@ -16,7 +16,7 @@
 
 Everything here is textbook Gaussian elimination; it is kept separate from the
 split matrices of :mod:`zxqec.gpf.matrix`, which carry phases along with the
-rows and follow the thesis's pivot rules.
+rows and follow their own pivot rules.
 """
 
 from __future__ import annotations

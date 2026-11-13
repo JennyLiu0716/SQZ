@@ -97,17 +97,17 @@ def test_boolean_paulis_random():
         assert len(spiders(res.graph)) == 6
 
 
-def test_isolate_paulis_reproduces_thesis_form():
+def test_isolate_paulis_puts_every_phase_on_a_leaf():
     rng = random.Random(5)
     g = conditional_pauli_circuit(rng, 3, 8)
     names = boolean_variables(g)
-    thesis = to_gpf(g, isolate_paulis=True)
-    assert is_gpf(thesis)
+    isolated = to_gpf(g, isolate_paulis=True)
+    assert is_gpf(isolated)
     # every non-boundary spider that carries a phase is a leaf, all others are phase-free
-    for v in spiders(thesis):
-        if thesis.phase(v) != 0:
-            assert is_leaf(thesis, v) and thesis.vertex_degree(v) == 1
-    assert equal_for_all_assignments(thesis, g, names)
+    for v in spiders(isolated):
+        if isolated.phase(v) != 0:
+            assert is_leaf(isolated, v) and isolated.vertex_degree(v) == 1
+    assert equal_for_all_assignments(isolated, g, names)
     res = reduce_gpf(g, isolate_paulis=True)
     assert equal_for_all_assignments(res.to_graph(), g, names, constraints=res.constraints)
 

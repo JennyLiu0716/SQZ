@@ -45,8 +45,8 @@ operation on the logical qubits: the block maps the code before it into the
 code after it. A block that fails is reported as leaving the code, not as a
 gate.
 
-**Codes that are not CSS: through the isometry AP normal form.** Section 4.5
-of the thesis reduces any stabilizer code to the CSS case: the ideal encoder
+**Codes that are not CSS: through the isometry AP normal form.** This
+reduces any stabilizer code to the CSS case: the ideal encoder
 is ``E = U_O . C . U_I`` (:func:`~zxqec.codes.iap_normal_form`), a diagonal
 Clifford ``U_O`` after a phase-free CSS core ``C`` after a logical Clifford
 ``U_I``. When a code is not CSS, the composite is built from these layers,
@@ -319,7 +319,7 @@ class LogicalAction:
 
         Only with ``via='iapnf'``. The logical action is this one with ``U_I^in``
         before it and ``U_I^out^dagger`` after it; when ``U_O`` cancelled, it is
-        the check of the block on a CSS code, as in the thesis (Section 4.5).
+        the check of the block on a CSS code.
         """
         if self.normal_forms is None or self.block is None:
             raise ValueError("on_core needs a logical action computed via the isometry AP normal form")
