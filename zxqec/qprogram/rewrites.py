@@ -93,13 +93,15 @@ def _gpf(gadgets: bool) -> Callable[[BaseGraph], Any]:
 
 
 def _gpf_checks(g: BaseGraph) -> Any:
-    from ..gpf import one_spider_per_outcome
+    from ..gpf import one_spider_per_outcome, postselected_checks
+    selected = [qubits for _e, qubits in postselected_checks(g)]    # read before the reduction changes g
     result = _gpf(True)(g)
     if result.is_zero:
         return result
     graph = result.to_graph()
     detectors = [c for c in result.constraints if hasattr(c, 'free_vars') and c.free_vars()]
-    return graph, detectors + [c for c in one_spider_per_outcome(graph) if hasattr(c, 'free_vars') and c.free_vars()]
+    return graph, detectors + [c for c in one_spider_per_outcome(graph, selected)
+                               if hasattr(c, 'free_vars') and c.free_vars()]
 
 
 def _pyzx(name: str) -> Callable[[BaseGraph], Any]:

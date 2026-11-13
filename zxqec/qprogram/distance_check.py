@@ -233,7 +233,7 @@ def split_by_gate_type(program: QProgram) -> SplitProgram:
     for s, st in enumerate(stages):
         if st.kind != 'circuit':
             new._append(Stage(len(new._stages), st.kind, st.circuit.copy(), st.mapping, perm=st.perm,
-                              name=st.name, visible=st.visible))
+                              name=st.name, visible=st.visible, cross_inside=st.cross_inside))
             kinds.append('Clifford')
             origin.append(s)
             continue

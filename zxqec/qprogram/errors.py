@@ -129,7 +129,7 @@ def _with_stage(program: QProgram, after: int, gates: list[Any], name: str = 'er
     for st in stages:
         if st.kind == 'permutation':
             assert st.perm is not None
-            out.add_permutation(list(st.perm), name=st.name, visible=st.visible)
+            out.add_permutation(list(st.perm), name=st.name, visible=st.visible, cross_inside=st.cross_inside)
         else:
             c = Circuit(program.qubits, bit_amount=program.bits)
             for g in st.circuit.gates:

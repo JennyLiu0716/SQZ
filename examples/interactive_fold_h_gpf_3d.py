@@ -46,15 +46,16 @@ X_Z = ("Z checks (code 2)", "Z checks")          # blocks 2 and 5: in X-Z normal
 
 
 def build(miswired: bool, rewrite: str = 'gpf', per_stage: dict[str, str] | None = None,
-          places: dict[int, tuple[float, float]] | None = None):
+          places: dict[int, tuple[float, float]] | None = None, **options):
     """The program with one level: each stage a block, ``rewrite`` on all but ``KEEP``; returns it and the level.
 
     The stages in ``X_Z`` take the X-Z form of ``rewrite`` (``'x-z gpf'`` for ``'gpf'``). ``per_stage`` gives
     some stages, by name, a rewrite of their own (e.g. ``{'X checks': 'x-z gpf'}``). ``places`` draws some qubits
-    elsewhere in the pictures (``build_program``).
+    elsewhere in the pictures (``build_program``). Other keyword arguments go to ``build_program``
+    (``post_select_encoder``, ``cross_inside``).
     """
     p = fth.build_program(miswired=miswired, prepare_when_used=True,    # no idle wires before first use
-                          places=places)
+                          places=places, **options)
     names = [str(p.stage(i)) for i in range(p.num_stages)]
     per_stage = {**{name: 'x-z ' + rewrite for name in X_Z}, **(per_stage or {})}
     unknown = set(per_stage) - set(names)

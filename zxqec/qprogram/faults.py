@@ -929,7 +929,7 @@ def _copy(program: QProgram, extra: Callable[[int, int, Any], list[Any]],
     for st in stages:
         if st.kind == 'permutation':
             assert st.perm is not None
-            out.add_permutation(list(st.perm), name=st.name, visible=st.visible)
+            out.add_permutation(list(st.perm), name=st.name, visible=st.visible, cross_inside=st.cross_inside)
             continue
         c = Circuit(program.qubits, bit_amount=program.bits)
         for j, g in enumerate(st.circuit.gates):
